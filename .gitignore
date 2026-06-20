@@ -1,0 +1,36 @@
+# ── Python ──────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ── 가상환경 ────────────────────────────
+venv/
+.venv/
+env/
+
+# ── 환경변수·시크릿 ─────────────────────
+.env
+*.key
+
+# ── DB (런타임 생성) ────────────────────
+db/*.db
+db/*.db-journal
+db/*.db-wal
+db/*.db-shm
+
+# ── 산출물 ──────────────────────────────
+exports/
+logs/
+
+# ── 디버그·스크린샷 ─────────────────────
+debug_*.png
+*.log
+
+# ── IDE / OS ────────────────────────────
+.vscode/
+.idea/
+.claude/
+.DS_Store
+Thumbs.db

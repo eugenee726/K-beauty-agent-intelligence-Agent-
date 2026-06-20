@@ -1,0 +1,27 @@
+# K-Beauty Intelligence Agent v3 - Dependencies
+
+# LLM
+openai>=1.0.0
+anthropic>=0.39.0
+
+# 데이터 수집
+requests>=2.31.0
+playwright>=1.40.0
+google-api-python-client>=2.100.0
+
+# 데이터 처리
+pandas>=2.0.0
+numpy>=1.24.0
+rapidfuzz>=3.0.0
+
+# 통계 분석
+scipy>=1.11.0
+
+# 스케줄러
+apscheduler>=3.10.0
+
+# 환경변수
+python-dotenv>=1.0.0
+
+# LLM 관측
+langfuse>=2.0.0
