@@ -406,23 +406,3 @@ schtasks /Delete /TN "KBeauty\WeeklyPipeline" /F
 
 ---
 
-## 11. v3 변경 이력
-
-| 날짜 | 변경 내용 |
-|------|-----------|
-| 2026-05-04 | v3 초기 설계: Orchestrator + 3-Agent 분리, Z-score/모멘텀 분석 추가 |
-| 2026-06 | DecisionAgent 리팩토링: 3 Builder 구조 (TrendInsight / ProductInsight / InboundPick) |
-| 2026-06 | VOC 수집 개선: 최신10 + 도움됨10 혼합, OYKRTool 제거 |
-| 2026-06-18 | **Agentic Orchestrator 추가**: Claude API Tool Use 기반 ReAct 루프 |
-| 2026-06-18 | **LangFuse 트레이싱 통합**: generation/span 단위 추적, 키 없으면 자동 스킵 |
-| 2026-06-19 | **z_score 영속화**: StatsTool이 계산한 z_score를 `fact_sns_signals.z_score`에 저장 |
-| 2026-06-19 | **MomentumTool 개편**: 첫 등장 대비 → 최근 3주 추세 기반 (momentum_score + weeks_rising). DecisionAgent 중복 폴백 제거하고 MomentumTool로 통일 |
-| 2026-06-19 | **trend_shape 분류 추가**: opportunity_type과 독립된 트렌드 모양 축 (emerging/sustained/spike/steady). HTML 리포트 트렌드 탭에 배지 노출 |
-| 2026-06-19 | **TikTok 미국 타겟 수집**: `proxyCountryCode="US"` + `textLanguage=="en"` 필터 (YouTube와 동일 취지). W26부터 순수 미국 타겟 누적 |
-| 2026-06-19 | **정기 실행 스케줄링**: `scheduler.py`(APScheduler 상주) + Windows 작업 스케줄러용 배치(run_weekly/run_catalog). 주간 목요일 09:00 / 월간 1일 03:00 |
-| 2026-06-19 | **HTML 리포트 대폭 개선**: 트렌드 탭(미니차트 발굴~5주, 카드 클릭 필터+설명, trend_shape/정렬 드롭다운, SNS 근거 인용, 하단 산식·선정기준) / 제품 탭(전략 사분면 산점도, 검색·정렬, 브랜드 티어·부정 VOC, VOC 범례, 하단 분류기준) |
-| 2026-06-19 | **VOC 결측 대응**: VocCollector 제품별 재시도(최대 2회) + DecisionAgent 직전 주차 VOC 폴백(`voc_source_week` 기록, 리포트 배지 표시). Sephora 순위 컬럼 제거(수집 불가) |
-| 2026-06-19 | **제품 분류 VOC 중심 전환**: 리테일 비중 축소(Top 100 보조) + VOC 모멘텀(리뷰 유입 velocity·별점 추세) 주 신호화. Sephora statistics API + OY `em.star-rating` 스크랩으로 전체 리뷰 수·전체 평점 수집(`total_reviews`·`platform_avg_rating`). 산점도 축을 리테일→리뷰유입×VOC로 전환. velocity는 W26+부터 유효 |
-| 2026-06-19 | **방한픽 Pick Score 개편**: 순위 비중 70%→35%, SNS·VOC 22%→65%. SNS를 연결여부(0/1)→트렌드 강도(z·momentum 정규화)로 전환. 순위 정규화 분모 버그 수정(total_korea→Top 100 고정) |
-| 2026-06-19 | **제품 탭 VOC 표·헤더 개선**: 주요 VOC 키워드를 표 형식으로 전환(제품별 긍정/부정/니즈 분리 + 리테일 URL 링크 + 사분면 필터 버튼). 브랜드 티어 영어 라벨화. 산식 박스에서 4분면 분류 기준만 제거(지표 산식 유지). 헤더에 주차 라벨(예: "6월 3주차 6/15~6/21") + 데이터 소스(SNS: TikTok/YouTube, Retail: OY Global/Sephora USA) 표기 |
-| 2026-06-21 | **프로젝트 정리**: 루트 debug/test/일회성 스크립트 23개 삭제, 레거시 `fact_opportunities` 테이블·export 제거, 미사용 의존성(pytrends·jinja2) 정리, `__pycache__`·routine_tool/google_trends 잔재 제거 |
