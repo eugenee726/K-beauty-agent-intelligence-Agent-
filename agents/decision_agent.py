@@ -680,23 +680,26 @@ class DecisionAgent:
     def _build_inbound_picks(self) -> int:
         """
         방한 관광객 추천 제품 선정 (Top 15).
-        기준(2026-06 개편 — 순위 비중↓, SNS·VOC↑):
-          0.25 × 한국순위 + 0.10 × 글로벌주문순위
-          + 0.35 × VOC 긍정도 + 0.30 × SNS 트렌드 강도
-        SNS 트렌드 강도 = 연결 트렌드 키워드의 z_score/momentum 정규화 블렌드.
+        기준(2026-06 개편 — Sephora 포함 + SNS 강화):
+          pick_score = 0.35 × SNS 트렌드 강도 + 0.35 × VOC 긍정도 + 0.30 × 리테일 인기
+
+        · 후보 풀 = OY(한국 인기 ∪ 글로벌 주문) ∪ Sephora(리뷰 활성 제품)
+        · 리테일 인기 = OY 한국 랭킹 · OY 글로벌 랭킹 · Sephora 인기 중 최고값
+        · Sephora 인기 = 리뷰 유입 속도(velocity) 우선, 없으면 누적 리뷰 수 log 보조(디스카운트)
+        · SNS 트렌드 강도 = 연결 트렌드 키워드의 z_score/momentum 정규화 블렌드
         출력: fact_inbound_picks
         """
+        import math
         with self._conn() as conn:
-            korea_rows = conn.execute("""
-                SELECT r.product_id, r.rank_position,
-                       p.brand_id, p.product_name_en, b.tier
-                FROM fact_retail_rankings r
-                JOIN dim_product p ON r.product_id = p.product_id
-                JOIN dim_brand   b ON p.brand_id = b.brand_id
-                WHERE r.week=? AND r.platform_id='oy_top_korea'
-                ORDER BY r.rank_position
-            """, (self.week,)).fetchall()
-
+            # 후보 풀 = OY(한국 인기 ∪ 글로벌 주문) ∪ Sephora(리뷰 활성 제품)
+            #   OY 랭킹 + 미국 현지(Sephora) 인기까지 포함해 방한 동선을 폭넓게 반영
+            korea_map: dict[str, int] = {
+                r["product_id"]: r["rank_position"]
+                for r in conn.execute("""
+                    SELECT product_id, rank_position FROM fact_retail_rankings
+                    WHERE week=? AND platform_id='oy_top_korea'
+                """, (self.week,)).fetchall()
+            }
             orders_map: dict[str, int] = {
                 r["product_id"]: r["rank_position"]
                 for r in conn.execute("""
@@ -704,6 +707,29 @@ class DecisionAgent:
                     WHERE week=? AND platform_id='oy_top_orders'
                 """, (self.week,)).fetchall()
             }
+            # Sephora 인기 신호: 전체 리뷰 수 + 평점 (랭킹 접근 불가 → 리뷰로 인기 대리)
+            sephora_stats: dict[str, dict] = {}
+            for r in conn.execute("""
+                SELECT product_id, total_reviews, platform_avg_rating
+                FROM fact_voc_signals
+                WHERE week=? AND platform_id='sephora_us' AND total_reviews IS NOT NULL
+            """, (self.week,)).fetchall():
+                sephora_stats[r["product_id"]] = {
+                    "total_reviews": r["total_reviews"],
+                    "rating": r["platform_avg_rating"],
+                }
+
+            # 합집합 후보 (제품 메타 포함)
+            cand_ids = set(korea_map) | set(orders_map) | set(sephora_stats)
+            candidates = []
+            if cand_ids:
+                ph = ",".join("?" * len(cand_ids))
+                for r in conn.execute(f"""
+                    SELECT p.product_id, p.brand_id, p.product_name_en, b.tier
+                    FROM dim_product p JOIN dim_brand b ON p.brand_id = b.brand_id
+                    WHERE p.product_id IN ({ph})
+                """, tuple(cand_ids)).fetchall():
+                    candidates.append(r)
 
             # 제품 → 연결 트렌드 키워드
             prod_kws: dict[str, list[str]] = {}
@@ -744,15 +770,17 @@ class DecisionAgent:
                             pass
                     voc_kw_map[r["product_id"]] = all_kws
 
-        if not korea_rows:
-            logger.warning("InboundPick: oy_top_korea 데이터 없음 — 스킵")
+        if not candidates:
+            logger.warning("InboundPick: 리테일 랭킹 후보 없음 — 스킵")
             return 0
 
-        total_korea = len(korea_rows)
+        # Sephora velocity 계산용 직전 주차 전체 리뷰 수
+        sephora_prev = self._get_prev_voc_stats(list(sephora_stats.keys())) if sephora_stats else {}
+
         picks = []
-        for row in korea_rows:
+        for row in candidates:
             pid         = row["product_id"]
-            korea_rank  = row["rank_position"]
+            korea_rank  = korea_map.get(pid)
             orders_rank = orders_map.get(pid)
             voc_pos     = voc_pos_map.get(pid, 0.0)
             is_sns      = pid in sns_linked
@@ -765,12 +793,24 @@ class DecisionAgent:
                 mom_norm = min(1.0, mom / 3.0)     # 3배 성장 → 1.0
                 sns_strength = max(sns_strength, 0.6 * z_norm + 0.4 * mom_norm)
 
-            # 순위 정규화: Top 100 고정 기준 (행 수가 아닌 실제 순위)
-            rank_score   = max(0.0, 1.0 - (korea_rank - 1) / 100.0)
-            orders_score = max(0.0, 1.0 - (orders_rank - 1) / 100.0) if orders_rank else 0.0
-            pick_score   = round(
-                0.25 * rank_score + 0.10 * orders_score
-                + 0.35 * voc_pos + 0.30 * sns_strength,
+            # ── 리테일 인기 점수 = OY 랭킹 · Sephora 인기 중 최고값 ──
+            oy_korea_score  = max(0.0, 1.0 - (korea_rank - 1) / 100.0)  if korea_rank  else 0.0
+            oy_orders_score = max(0.0, 1.0 - (orders_rank - 1) / 100.0) if orders_rank else 0.0
+            # Sephora 인기: 리뷰 유입 속도(velocity) 우선, 없으면 누적 리뷰 수 log 보조(디스카운트)
+            sephora_score = 0.0
+            if pid in sephora_stats:
+                cur_tot = sephora_stats[pid]["total_reviews"] or 0
+                prev_tot = sephora_prev.get(pid, {}).get("total_reviews")
+                if prev_tot and cur_tot > prev_tot:
+                    # velocity: 주간 리뷰 증가율 정규화 (50% 증가 → 1.0)
+                    sephora_score = min(1.0, (cur_tot - prev_tot) / prev_tot / 0.5)
+                elif cur_tot:
+                    # 보조: 누적 리뷰 수 log 정규화 후 0.6 디스카운트 (스테디셀러 편향 완화)
+                    sephora_score = 0.6 * min(1.0, math.log10(cur_tot + 1) / 3.0)
+            retail_pop = max(oy_korea_score, oy_orders_score, sephora_score)
+
+            pick_score = round(
+                0.35 * sns_strength + 0.35 * voc_pos + 0.30 * retail_pop,
                 3,
             )
 
@@ -787,11 +827,16 @@ class DecisionAgent:
                 "pos_keywords": json.dumps(pos_kws),
                 "pick_reason": self._inbound_reason(
                     row["product_name_en"], row["brand_id"],
-                    korea_rank, orders_rank, voc_pos, is_sns, pos_kws
+                    korea_rank, orders_rank, voc_pos, is_sns, pos_kws,
+                    sephora_pop=(not korea_rank and not orders_rank and pid in sephora_stats),
                 ),
             })
 
         picks.sort(key=lambda x: x["pick_score"], reverse=True)
+
+        # 이전 실행 결과 제거 (후보·순위가 바뀌어도 잔존 방지)
+        with self._conn() as conn:
+            conn.execute("DELETE FROM fact_inbound_picks WHERE week=?", (self.week,))
 
         saved = 0
         for i, pick in enumerate(picks[:15], 1):
@@ -818,10 +863,15 @@ class DecisionAgent:
         logger.info(f"InboundPick: {saved}건 저장")
         return saved
 
-    def _inbound_reason(self, name, brand_id, korea_rank, orders_rank, voc_pos, is_sns, pos_kws) -> str:
-        parts = [f"한국 현지 인기 {korea_rank}위 ({brand_id.upper()})"]
+    def _inbound_reason(self, name, brand_id, korea_rank, orders_rank, voc_pos, is_sns,
+                        pos_kws, sephora_pop=False) -> str:
+        parts = [f"{brand_id.upper()}"]
+        if korea_rank:
+            parts.append(f"한국 현지 인기 {korea_rank}위")
         if orders_rank:
             parts.append(f"글로벌 주문 {orders_rank}위")
+        if sephora_pop:
+            parts.append("Sephora 리뷰 활발")
         if voc_pos >= 0.65:
             parts.append(f"VOC 긍정도 {voc_pos:.0%}")
         if is_sns:
