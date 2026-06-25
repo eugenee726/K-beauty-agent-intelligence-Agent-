@@ -388,18 +388,28 @@ class OYGlobalTool:
             logger.warning(f"OY Top in Korea 페이지 접속 실패: {e}")
             return []
 
-        # "Top in Korea" 또는 "Best in Korea" 탭/섹션 탐색
+        # "Top in Korea" 탭 탐색 — 실제 DOM은 클래스 없는 <a> (href 없음, JS 클릭)
+        # 텍스트 기반 셀렉터로 매칭해야 잡힘 (a.btn 등 클래스 셀렉터는 실패)
         results = []
+        clicked = False
         for btn_text in ["Top in Korea", "Best in Korea", "Korea Best"]:
-            try:
-                tab = page.locator("a.btn, button.btn, a.tab-btn, button").filter(has_text=btn_text)
-                if await tab.count() > 0:
-                    await tab.first.click()
-                    await page.wait_for_timeout(2000)
-                    logger.info(f"OY Top in Korea: '{btn_text}' 탭 클릭 성공")
-                    break
-            except Exception:
-                continue
+            for sel in (f'a:has-text("{btn_text}")',
+                        f'button:has-text("{btn_text}")',
+                        f'li:has-text("{btn_text}")'):
+                try:
+                    tab = page.locator(sel)
+                    if await tab.count() > 0:
+                        await tab.first.click(timeout=5000)
+                        await page.wait_for_timeout(2500)
+                        logger.info(f"OY Top in Korea: '{btn_text}' 탭 클릭 성공 ({sel})")
+                        clicked = True
+                        break
+                except Exception:
+                    continue
+            if clicked:
+                break
+        if not clicked:
+            logger.warning("OY Top in Korea: 탭을 찾지 못해 기본 페이지를 수집 (한국 랭킹 누락 가능)")
 
         # 상품 타일 수집 (Best Seller 페이지와 동일한 구조)
         tiles = await page.query_selector_all("li.order-best-product")

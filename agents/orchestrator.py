@@ -376,10 +376,16 @@ class Orchestrator:
                 # LANGFUSE_BASE_URL → LANGFUSE_HOST 자동 매핑
                 if os.environ.get("LANGFUSE_BASE_URL") and not os.environ.get("LANGFUSE_HOST"):
                     os.environ["LANGFUSE_HOST"] = os.environ["LANGFUSE_BASE_URL"]
-                langfuse = Langfuse()
-                logger.info("LangFuse 트레이싱 활성화")
-        except ImportError:
-            pass
+                _lf = Langfuse()
+                # 구버전(v2) trace API가 있을 때만 활성화 (v3+는 API가 달라 호환 안 됨)
+                if hasattr(_lf, "trace"):
+                    langfuse = _lf
+                    logger.info("LangFuse 트레이싱 활성화")
+                else:
+                    logger.warning("LangFuse SDK 버전이 호환되지 않아 트레이싱 비활성화 (파이프라인은 정상 진행)")
+        except Exception as e:
+            logger.warning(f"LangFuse 초기화 실패, 트레이싱 비활성화: {e}")
+            langfuse = None
 
         run_id  = self.memory.start_run("agentic_full")
         t_start = time.time()

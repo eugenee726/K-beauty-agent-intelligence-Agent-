@@ -684,16 +684,24 @@ class HTMLReportTool:
 
         list_html += '</tbody></table></div>'
 
-        # 선정 기준 설명
+        # 선정 기준 설명 (2026-06 개편: Sephora 포함 + SNS 강화)
         criteria_html = '''
-        <div class="card" style="margin-top:1.5rem;background:#f9f9f9">
+        <div class="card" style="margin-top:1.5rem;background:#fafafe">
           <h3 style="margin-bottom:0.8rem;font-size:0.95rem">📌 Pick Score 산출 기준</h3>
-          <div style="font-size:0.85rem;color:#555;line-height:1.7">
-            <strong>Pick Score</strong> = OY 한국 순위 × 0.45 + OY 글로벌 주문 순위 × 0.25
-            + VOC 긍정도 × 0.20 + SNS 트렌드 연결 여부 × 0.10<br/>
-            <span style="color:#888">• OY Top in Korea: 방한 관광객이 실제로 구매하는 상품 기준</span><br/>
-            <span style="color:#888">• OY Top Orders: 글로벌 수요 보조 지표</span><br/>
-            <span style="color:#888">• SNS 연결: fact_llm_insight_products에 포함된 제품 (트렌드 언급)</span>
+          <div style="font-size:0.84rem;color:#555;line-height:1.8">
+            <strong>Pick Score</strong> =
+            <b style="color:#1565c0">0.35 × SNS 트렌드 강도</b>
+            + <b style="color:#2e7d32">0.35 × VOC 긍정도</b>
+            + <b style="color:#e65100">0.30 × 리테일 인기</b>
+          </div>
+          <div style="font-size:0.82rem;color:#666;line-height:1.85;margin-top:0.6rem;border-top:1px solid #eee;padding-top:0.6rem">
+            <div><b>후보 풀</b> = OliveYoung(한국 인기 ∪ 글로벌 주문) ∪ Sephora(리뷰 활성 제품)
+              &nbsp;— 미국 현지(Sephora) 인기까지 포함해 방한 동선을 폭넓게 반영</div>
+            <div><b>SNS 트렌드 강도</b> = 연결 트렌드 키워드의 z-score·모멘텀 정규화 (지금 해외에서 뜨는 정도)</div>
+            <div><b>VOC 긍정도</b> = 리뷰 감성 긍정 비율 (실제 만족도)</div>
+            <div><b>리테일 인기</b> = OY 한국 랭킹 · OY 글로벌 랭킹 · Sephora 인기 중 <b>최고값</b></div>
+            <div style="margin-left:1rem;color:#888">└ Sephora 인기 = 리뷰 유입 속도(velocity) 우선, 없으면 누적 리뷰 수 log 보조(스테디셀러 편향 완화)</div>
+            <div style="color:#aaa;font-size:0.78rem;margin-top:0.3rem">※ Sephora는 랭킹 접근이 불가해 리뷰 신호로 인기를 대리. velocity는 연속 주차가 쌓일수록 정확해짐</div>
           </div>
         </div>'''
 
