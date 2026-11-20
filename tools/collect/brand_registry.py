@@ -11,7 +11,8 @@ dim_brand 에 수집용 메타데이터 컬럼을 추가하고, 브랜드 조회
 dim_brand 추가 컬럼:
   company            모회사 (예: 'Amorepacific', 'APR')
   aliases            JSON 배열. 브랜드명 표기 변형 (예: ["etude house"])
-  oy_global_brand_no OY Global brand-page brandNo (예: 'B00280')
+  oy_global_brand_no OY Global brand-page brandNo (예: 'B00280') — 옛 주소, 새 주소로 302 이동됨
+  oy_brand_slug      OY Global 새 브랜드 주소 /global/brands/<slug> (있으면 이쪽을 우선 사용)
   sephora_bv_name    Sephora BazaarVoice Brand.Name
   tiktok_hashtag     전용 TikTok 해시태그 (sns_tier='dedicated' 일 때 사용)
   youtube_query      전용 YouTube 검색어
@@ -28,6 +29,7 @@ _EXTRA_COLUMNS: list[tuple[str, str]] = [
     ("company",            "TEXT"),
     ("aliases",            "TEXT"),
     ("oy_global_brand_no", "TEXT"),
+    ("oy_brand_slug",      "TEXT"),   # OY Global 새 브랜드 주소 /global/brands/<slug>
     ("sephora_bv_name",    "TEXT"),
     ("tiktok_hashtag",     "TEXT"),
     ("youtube_query",      "TEXT"),
@@ -37,6 +39,7 @@ _EXTRA_COLUMNS: list[tuple[str, str]] = [
 
 # ── 추적 브랜드 시드 ─────────────────────────────────────────────
 # name: 표시명 / company: 모회사(확인된 것만, 모르면 생략) / oy: OY Global brandNo
+# slug: OY Global 새 브랜드 주소 이름 (/global/brands/<slug>) — brandNo 가 없는 브랜드용
 # bv: Sephora BazaarVoice Brand.Name(Sephora US 입점 확인된 것만)
 # tag/query: 전용 TikTok 해시태그·YouTube 검색어 → 있으면 sns_tier='dedicated'
 # aliases: 표기 변형(브랜드 매칭·SNS 키워드 탐지에 사용)
@@ -88,9 +91,9 @@ _SEED: dict[str, dict] = {
     "purito_seoul":   {"name": "Purito Seoul", "oy": "B01347", "aliases": ["purito"]},
     "amuse":          {"name": "AMUSE", "oy": "B00505", "aliases": ["amuse makeup", "amuse jel fit tint"]},
     "isntree":        {"name": "Isntree", "oy": "B00160"},
-    "mixsoon":        {"name": "mixsoon"},
+    "mixsoon":        {"name": "mixsoon", "slug": "mixsoon"},
     "medicube_age_r": {"name": "MEDICUBE AGE-R", "company": "APR", "oy": "B01121", "aliases": ["age-r", "age r", "ager booster"]},
-    "aprilskin":      {"name": "APRILSKIN", "company": "APR", "aliases": ["april skin"]},
+    "aprilskin":      {"name": "APRILSKIN", "company": "APR", "slug": "april-skin", "aliases": ["april skin"]},
 }
 
 # SNS 키워드 탐지에 쓰기에는 너무 짧거나 일반 영어 단어와 겹치는 표시명 (별칭만 사용)
@@ -136,6 +139,7 @@ def ensure_brand_schema(conn: sqlite3.Connection) -> None:
                    company            = COALESCE(company, ?),
                    aliases            = COALESCE(aliases, ?),
                    oy_global_brand_no = COALESCE(oy_global_brand_no, ?),
+                   oy_brand_slug      = COALESCE(oy_brand_slug, ?),
                    sephora_bv_name    = COALESCE(sephora_bv_name, ?),
                    tiktok_hashtag     = COALESCE(tiktok_hashtag, ?),
                    youtube_query      = COALESCE(youtube_query, ?)
@@ -143,7 +147,7 @@ def ensure_brand_schema(conn: sqlite3.Connection) -> None:
             (
                 m.get("company"),
                 json.dumps(m["aliases"]) if m.get("aliases") else None,
-                m.get("oy"), m.get("bv"), m.get("tag"), m.get("query"),
+                m.get("oy"), m.get("slug"), m.get("bv"), m.get("tag"), m.get("query"),
                 bid,
             ),
         )

@@ -6,7 +6,8 @@ OliveYoung Global (global.oliveyoung.com) 수집 툴.
 수집 항목:
   A) 제품 카탈로그 구축 (build_catalog) — 일회성 or 월 1회
      URL: /display/page/brand-page?brandNo=XXXXX
-     dim_brand 의 추적 브랜드(oy_global_brand_no 보유) 전 제품 수집 → dim_product
+     dim_brand 의 추적 브랜드(oy_brand_slug 또는 oy_global_brand_no 보유) 전 제품 수집 → dim_product
+     OY 는 브랜드 주소를 /global/brands/<slug> 로 바꿨다. 옛 brandNo 주소는 302 로 그쪽에 이동된다.
 
   B) 주간 베스트셀러 순위 (fetch_and_store) — 매주
      URL: /display/page/best-seller
@@ -237,8 +238,8 @@ class OYGlobalTool:
         with self._conn() as conn:
             brands = load_brands(conn, tracked_only=True)
         return [
-            (b["brand_id"], b["brand_name_en"], b["oy_global_brand_no"])
-            for b in brands if b.get("oy_global_brand_no")
+            (b["brand_id"], b["brand_name_en"], b.get("oy_brand_slug") or b["oy_global_brand_no"])
+            for b in brands if b.get("oy_brand_slug") or b.get("oy_global_brand_no")
         ]
 
     def _build_pid_brand_map(self) -> dict[str, str]:
@@ -627,7 +628,7 @@ class OYGlobalTool:
     # ──────────────────────────────────────────
     # A. 브랜드 페이지 카탈로그 수집
     # ──────────────────────────────────────────
-    async def _scrape_brand_catalog(self, page, brand_id: str, brand_name: str, brand_no: str) -> list[dict]:
+    async def _scrape_brand_catalog(self, page, brand_id: str, brand_name: str, brand_ref: str) -> list[dict]:
         """
         AP 브랜드 페이지에서 전체 제품 목록 수집.
         URL: /display/page/brand-page?brandNo=XXXXX
@@ -635,7 +636,11 @@ class OYGlobalTool:
         Phase 1: 브랜드 페이지 스크롤 → 모든 prdtNo 링크 수집
         Phase 2: 각 제품 상세 페이지 방문 → <span class="loc_cat"> 카테고리 추출
         """
-        url = f"{BASE_URL}/display/page/brand-page?brandNo={brand_no}"
+        # brand_ref: 'B00399' 같은 brandNo(옛 주소, 새 주소로 이동됨) 또는 'anua' 같은 slug(새 주소)
+        if re.fullmatch(r"B\d+", brand_ref or ""):
+            url = f"{BASE_URL}/display/page/brand-page?brandNo={brand_ref}"
+        else:
+            url = f"{BASE_URL}/global/brands/{brand_ref}"
         raw_products: list[dict] = []
         seen: set[str] = set()
 
