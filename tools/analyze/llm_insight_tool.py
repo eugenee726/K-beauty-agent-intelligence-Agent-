@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 import anthropic
 from pathlib import Path
 
+from tools.collect.brand_registry import ensure_brand_schema
+
 logger = logging.getLogger(__name__)
 
 # 키워드당 샘플링 수
@@ -53,7 +55,7 @@ class LLMInsightTool:
 
     def __init__(self, db_path: str, model: str = None):
         self.db_path  = db_path
-        self.model    = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5-20251001")
+        self.model    = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
         api_key       = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.")
@@ -112,12 +114,18 @@ class LLMInsightTool:
         return [r["content_text"] for r in rows]
 
     def _get_ap_catalog(self) -> list[dict]:
-        """AP 제품 카탈로그 조회 (product_id 포함)."""
+        """AP 제품 카탈로그 조회 (product_id 포함).
+
+        임시: 랭킹 수집이 전 브랜드를 저장하게 되면서(is_tracked=0 자동 등록)
+        카탈로그를 추적 브랜드로 한정한다. 3단계(중립 프롬프트 + 후보 추리기)에서 교체 예정.
+        """
         with self._conn() as conn:
+            ensure_brand_schema(conn)
             rows = conn.execute("""
                 SELECT p.product_id, p.brand_id, p.product_name_en,
                        p.category_main, p.key_ingredients, p.key_benefits
                 FROM dim_product p
+                JOIN dim_brand b ON b.brand_id = p.brand_id AND b.is_tracked = 1
                 ORDER BY p.brand_id, p.product_name_en
             """).fetchall()
         return [dict(r) for r in rows]
@@ -131,8 +139,10 @@ class LLMInsightTool:
     def _get_ap_brand_names(self) -> list[str]:
         """dim_brand에서 AP 브랜드 display name 목록 반환."""
         with self._conn() as conn:
+            ensure_brand_schema(conn)
             rows = conn.execute(
-                "SELECT brand_id, brand_name_en FROM dim_brand ORDER BY brand_id"
+                "SELECT brand_id, brand_name_en FROM dim_brand "
+                "WHERE is_tracked = 1 ORDER BY brand_id"
             ).fetchall()
         return [r["brand_name_en"] or r["brand_id"] for r in rows]
 

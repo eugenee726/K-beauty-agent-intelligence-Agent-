@@ -39,6 +39,9 @@ class AgentMemory:
         with self._conn() as conn:
             schema = Path(self.schema_path).read_text(encoding="utf-8")
             conn.executescript(schema)
+            # dim_brand 수집용 컬럼 추가·AP 시드 (schema.sql 이후에 실행해야 함)
+            from tools.collect.brand_registry import ensure_brand_schema
+            ensure_brand_schema(conn)
         logger.info(f"DB 초기화 완료: {self.db_path}")
 
     def _conn(self) -> sqlite3.Connection:

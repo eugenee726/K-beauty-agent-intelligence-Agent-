@@ -103,7 +103,7 @@ kbeauty_agent_v3/
 │   │   ├── oy_global_tool.py        # OliveYoung Global (Playwright)
 │   │   ├── sephora_tool.py          # Sephora US (Playwright + BazaarVoice)
 │   │   ├── voc_collector.py         # VOC 리뷰 수집 (최신10 + 도움됨10)
-│   │   ├── _ap_brands.py            # AP 브랜드 매핑 상수
+│   │   ├── brand_registry.py        # 브랜드 레지스트리 (dim_brand 단일 소스)
 │   │   └── _product_utils.py        # 제품명 정규화 유틸
 │   │
 │   ├── analyze/

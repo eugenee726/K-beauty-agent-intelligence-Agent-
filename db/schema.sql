@@ -19,7 +19,10 @@ CREATE TABLE IF NOT EXISTS dim_brand (
     sns_keywords  TEXT               -- JSON: ["laneige","water sleeping mask","lip sleeping mask"]
 );
 
-INSERT OR IGNORE INTO dim_brand VALUES
+-- 수집용 컬럼(company, oy_global_brand_no, is_tracked 등)은
+-- tools/collect/brand_registry.py ensure_brand_schema() 가 ALTER TABLE 로 추가·시드한다.
+-- 컬럼 수가 늘어나도 깨지지 않도록 INSERT 에 컬럼 목록을 명시한다.
+INSERT OR IGNORE INTO dim_brand (brand_id, brand_name_en, brand_name_kr, tier, sns_keywords) VALUES
 -- korean_luxury
 ('sulwhasoo', 'Sulwhasoo',  '설화수',  'korean_luxury',       '["sulwhasoo","설화수","first care activating serum"]'),
 ('hera',      'HERA',       '헤라',    'korean_luxury',       '["hera","헤라","hera seoul","hera cushion"]'),

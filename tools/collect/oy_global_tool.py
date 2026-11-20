@@ -1,16 +1,17 @@
 """
 oy_global_tool.py
 ──────────────────
-OliveYoung Global (global.oliveyoung.com) 수집 툴 — 아모레퍼시픽 제품 전용.
+OliveYoung Global (global.oliveyoung.com) 수집 툴.
 
 수집 항목:
   A) 제품 카탈로그 구축 (build_catalog) — 일회성 or 월 1회
      URL: /display/page/brand-page?brandNo=XXXXX
-     AP 11개 브랜드 전 제품 수집 → dim_product
+     dim_brand 의 추적 브랜드(oy_global_brand_no 보유) 전 제품 수집 → dim_product
 
   B) 주간 베스트셀러 순위 (fetch_and_store) — 매주
      URL: /display/page/best-seller
-     AP 브랜드 필터링 → 실제 순위 번호 보존 → fact_retail_rankings
+     전 브랜드 저장 → 실제 순위 번호 보존 → fact_retail_rankings
+     처음 보는 브랜드는 dim_brand 에 is_tracked=0 으로 자동 등록
 
 VOC 수집은 tools/collect/voc_collector.py 에서 분리 관리.
 분석 단계에서 트렌드 확정 제품에 대해서만 on-demand 수집.
@@ -24,7 +25,9 @@ from datetime import datetime, timezone
 from typing import Union
 
 from playwright.async_api import async_playwright
-from tools.collect._ap_brands import is_ap_brand, ap_brand_id, OY_AP_BRAND_PAGES
+from tools.collect.brand_registry import (
+    BrandMatcher, load_brands, register_observed_brand, slugify,
+)
 from tools.collect._product_utils import next_product_id, find_matching_product
 
 logger = logging.getLogger(__name__)
@@ -44,12 +47,10 @@ CATEGORIES = [
 ]
 
 
-def _guess_brand_from_text(text: str) -> str:
-    """
-    타일에서 브랜드 필드가 비어있을 때 제품명/텍스트에서 AP 브랜드명을 추정.
-    """
-    bid = ap_brand_id(text or "")
-    return bid or ""
+async def _tile_brand_name(tile) -> str:
+    """랭킹 타일의 브랜드 표시명. <dl class="brand-info"><dt>Dr. Althea</dt>"""
+    el = await tile.query_selector("dl.brand-info dt")
+    return (await el.inner_text()).strip() if el else ""
 
 
 async def _scrape_product_detail(page, prdtno: str) -> dict:
@@ -225,8 +226,23 @@ class OYGlobalTool:
                 result[f"prdtno:{r['oy_prdtno']}"] = r["product_id"]
         return result
 
+    def _catalog_brand_pages(self) -> list[tuple[str, str, str]]:
+        """카탈로그 수집 대상: 추적 브랜드 중 OY Global brandNo 가 있는 것 (brand_id, 표시명, brandNo)"""
+        with self._conn() as conn:
+            brands = load_brands(conn, tracked_only=True)
+        return [
+            (b["brand_id"], b["brand_name_en"], b["oy_global_brand_no"])
+            for b in brands if b.get("oy_global_brand_no")
+        ]
+
+    def _build_pid_brand_map(self) -> dict[str, str]:
+        """product_id → brand_id (제품명 유사 매칭을 같은 브랜드로 제한하는 데 사용)"""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT product_id, brand_id FROM dim_product").fetchall()
+        return {r["product_id"]: r["brand_id"] for r in rows}
+
     def _build_catalog_prdtno_set(self) -> dict[str, str]:
-        """카탈로그에 등록된 prdtNo → brand_id 맵 (AP 여부 판별용)"""
+        """카탈로그에 등록된 prdtNo → brand_id 맵"""
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT oy_prdtno, brand_id FROM dim_product WHERE oy_prdtno IS NOT NULL"
@@ -243,10 +259,6 @@ class OYGlobalTool:
             if len(key) > 4 and (key in n or n in key):
                 return pid
         return None
-
-    def _make_brand_id(self, brand: str) -> str:
-        """브랜드명 → dim_brand.brand_id (AP 계열 전용)"""
-        return ap_brand_id(brand) or re.sub(r'[^a-z0-9]', '_', brand.lower().strip()).strip('_')
 
     # ──────────────────────────────────────────
     # A. 랭킹 스크래핑
@@ -312,8 +324,8 @@ class OYGlobalTool:
                         raw_name = (await img.get_attribute("alt") or "").strip() if img else ""
                     if not raw_name:
                         continue
-                    brand_guess = _guess_brand_from_text(raw_name)
-                    product_name = _clean_product_name(raw_name, brand_guess)
+                    brand_name = await _tile_brand_name(tile)
+                    product_name = _clean_product_name(raw_name, brand_name)
 
                     # 순위: div.rank-badge span
                     rank = 0
@@ -332,7 +344,7 @@ class OYGlobalTool:
                     results.append({
                         "rank":         rank,
                         "product_name": product_name,
-                        "brand":        brand_guess,  # 카탈로그 비어있을 때 보조 판별
+                        "brand":        brand_name,   # 타일 표시 브랜드명
                         "category":     category,
                         "url":          full_url,
                         "prdtNo":       prdtNo,
@@ -427,8 +439,8 @@ class OYGlobalTool:
                 if not raw_name:
                     continue
 
-                brand_guess = _guess_brand_from_text(raw_name)
-                product_name = _clean_product_name(raw_name, brand_guess)
+                brand_name = await _tile_brand_name(tile)
+                product_name = _clean_product_name(raw_name, brand_name)
 
                 rank = 0
                 rank_el = await tile.query_selector("div.rank-badge span")
@@ -445,7 +457,7 @@ class OYGlobalTool:
                 results.append({
                     "rank":         rank,
                     "product_name": product_name,
-                    "brand":        brand_guess,
+                    "brand":        brand_name,
                     "category":     "skincare",
                     "url":          full_url,
                     "prdtNo":       prdtNo,
@@ -726,7 +738,7 @@ class OYGlobalTool:
 
             brand_tasks = [
                 collect_links(bid, bname, bno)
-                for bid, bname, bno in OY_AP_BRAND_PAGES
+                for bid, bname, bno in self._catalog_brand_pages()
             ]
             brand_results = await asyncio.gather(*brand_tasks, return_exceptions=True)
 
@@ -874,7 +886,11 @@ class OYGlobalTool:
     # ──────────────────────────────────────────
     async def _run_async(self, week: str) -> dict:
         product_map    = self._build_product_map()
-        catalog_prdtno = self._build_catalog_prdtno_set()  # prdtNo → brand_id (AP 판별)
+        catalog_prdtno = self._build_catalog_prdtno_set()  # prdtNo → brand_id
+        pid_brand      = self._build_pid_brand_map()
+        with self._conn() as conn:
+            matcher = BrandMatcher(load_brands(conn))
+        observed_brands: dict[str, str] = {}  # 처음 보는 brand_id → 표시명
         ranking_rows: list[tuple] = []
         new_products: list[dict]  = []
 
@@ -899,9 +915,6 @@ class OYGlobalTool:
             # ② Top in Korea 수집
             korea_rankings = await self._scrape_top_in_korea(page)
 
-            # AP 제품 판별: prdtNo → 카탈로그 매칭 우선, 브랜드명 감지 보조
-            voc_targets: list[tuple[str, str, str]] = []
-
             # Top Orders + Top in Korea 통합 처리
             # all_rankings: {category: [items]} → (platform_id, items) 목록으로 변환
             combined_sources: list[tuple[str, str, list[dict]]] = []
@@ -917,20 +930,23 @@ class OYGlobalTool:
                     brand  = item.get("brand", "")
                     total_seen += 1
 
-                    # AP 판별: ① 카탈로그 prdtNo 매칭 → ② 브랜드명 감지
-                    brand_id = None
-                    if prdtno and prdtno in catalog_prdtno:
-                        brand_id = catalog_prdtno[prdtno]
-                    elif is_ap_brand(brand):
-                        brand_id = self._make_brand_id(brand)
-                    elif brand:
-                        brand_id = brand if "_" in brand or brand.islower() else self._make_brand_id(brand)
-
+                    # 브랜드 판별: ① 카탈로그 prdtNo → ② 타일 브랜드명 → ③ 처음 보는 브랜드는 자동 등록
+                    brand_id = catalog_prdtno.get(prdtno) if prdtno else None
+                    if not brand_id and brand:
+                        brand_id = matcher.match_exact(brand)
+                        if not brand_id:
+                            brand_id = slugify(brand)
+                            if brand_id:
+                                observed_brands.setdefault(brand_id, brand)
                     if not brand_id:
-                        continue  # AP 아님
+                        continue  # 브랜드명을 읽지 못한 타일
 
-                    pid = product_map.get(f"prdtno:{prdtno}") \
-                          or self._match_product_id(item["product_name"], product_map)
+                    pid = product_map.get(f"prdtno:{prdtno}")
+                    if not pid:
+                        # 이름 유사 매칭은 같은 브랜드 제품끼리만 허용 (다른 브랜드 오매칭 방지)
+                        cand = self._match_product_id(item["product_name"], product_map)
+                        if cand and pid_brand.get(cand) == brand_id:
+                            pid = cand
                     if not pid:
                         new_products.append({
                             "brand_id":        brand_id,
@@ -950,8 +966,8 @@ class OYGlobalTool:
                     ranking_rows.append((week, platform_src, pid, item["rank"], category))
 
             logger.info(
-                f"  랭킹 수집: 전체 {total_seen}개 중 AP {len(ranking_rows)}개 "
-                f"(Top Orders + Top in Korea 포함, 카탈로그 {len(catalog_prdtno)}개 등록)"
+                f"  랭킹 수집: 전체 {total_seen}개 중 저장 {len(ranking_rows)}개 "
+                f"(Top Orders + Top in Korea 포함, 신규 관측 브랜드 {len(observed_brands)}개)"
             )
 
             # 신규 제품 카테고리: 상세 페이지 방문으로 채움
@@ -973,6 +989,9 @@ class OYGlobalTool:
         new_product_count = ranking_count = 0
         tmp_pid_to_real: dict[str, str] = {}
         with self._conn() as conn:
+            # 처음 보는 브랜드를 dim_brand 에 먼저 등록 (없으면 JOIN dim_brand 에서 누락됨)
+            for bid, display in observed_brands.items():
+                register_observed_brand(conn, display)
             for p in new_products:
                 try:
                     # 서로게이트 키 채번
