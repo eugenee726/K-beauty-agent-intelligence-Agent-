@@ -17,10 +17,10 @@ decision_agent.py
 (이전 AP 관점 유형 amplify/position/counter/new_entry 는 과거 주차 데이터에만 남아 있다)
 
 전략 사분면 (strategy_quad):
-  PUSH_NOW    : 리테일 상위 + VOC 긍정 ≥ 0.65
-  FIX_AND_PUSH: 리테일 상위 + VOC 긍정 < 0.65
-  HOLD        : 리테일 하위 + VOC 긍정 ≥ 0.65
-  MONITOR     : 리테일 하위 + VOC 긍정 < 0.65
+  PUSH_NOW    : 긍정(VOC ≥ 0.65 또는 랭킹 점수 ≥ 0.7) + 별점 상승 + 불만 신호 없음
+  FIX_AND_PUSH: 불만 신호 (별점 하락 또는 부정 ≥ 0.35)
+  HOLD        : 긍정이나 별점 상승 없음
+  MONITOR     : 그 외
 """
 
 import json
@@ -587,28 +587,28 @@ class DecisionAgent:
     ) -> str:
         """
         VOC 중심 분류 (리테일은 보조).
-          주 신호: VOC 긍정도 + 모멘텀(리뷰 유입 velocity, 별점 추세)
+          주 신호: VOC 긍정도 + 별점 추세
           보조:    retail_score (Top 100 기준, 동점 가산)
 
-        - PUSH_NOW    : 긍정 + 상승 모멘텀 (유입↑ 또는 별점↑)
-        - FIX_AND_PUSH: 관심↑(유입↑)인데 불만↑(별점↓ 또는 부정↑)
-        - HOLD        : 긍정이나 모멘텀 약함 (정체)
+        - PUSH_NOW    : 긍정 + 별점 상승 + 불만 신호 없음
+        - FIX_AND_PUSH: 불만 신호 (별점↓ 또는 부정 ≥ 0.35)
+        - HOLD        : 긍정이나 별점 상승 없음 (정체)
         - MONITOR     : 그 외
+
+        voc_velocity(누적 리뷰 증가분)는 누적값이라 거의 항상 > 0 → 판정에서 제외, 표시용으로만 저장.
         """
         voc_pos = sentiment_pos if sentiment_pos is not None else 0.0
         voc_neg = sentiment_neg if sentiment_neg is not None else 0.0
         has_voc = sentiment_pos is not None
 
-        rising   = (voc_velocity is not None and voc_velocity > 0) or \
-                   (rating_trend is not None and rating_trend > 0)
+        rising    = rating_trend is not None and rating_trend > 0
         declining = (rating_trend is not None and rating_trend < 0) or voc_neg >= 0.35
-        inflow_up = voc_velocity is not None and voc_velocity > 0
 
         is_positive = (has_voc and voc_pos >= 0.65) or retail_score >= 0.7
 
         if is_positive and rising and not declining:
             return "PUSH_NOW"
-        elif inflow_up and (declining or not is_positive):
+        elif declining:
             return "FIX_AND_PUSH"
         elif is_positive:
             return "HOLD"

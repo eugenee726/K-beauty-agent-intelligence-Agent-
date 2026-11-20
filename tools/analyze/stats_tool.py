@@ -36,6 +36,7 @@ class StatsTool:
     Z_ALERT         = 2.0   # z ≥ this → is_anomaly
     MIN_POST_COUNT  = 5     # LLM·Decision actionable volume floor
     P_THRESH        = 0.05  # t-test 유의수준
+    BASELINE_WEEKS  = 8     # z 기준선 = 직전 8개 주차만 (초기 소규모 수집 주차가 기준선을 왜곡하던 문제 제거)
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -106,7 +107,7 @@ class StatsTool:
         for keyword, grp in df.groupby("keyword"):
             grp = grp.sort_values("week")
             current = grp[grp["week"] == week]
-            history = grp[grp["week"] < week]
+            history = grp[grp["week"] < week].tail(self.BASELINE_WEEKS)
 
             if current.empty:
                 continue
