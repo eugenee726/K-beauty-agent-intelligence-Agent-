@@ -4,17 +4,17 @@ decision_agent.py
 의사결정 에이전트.
 
 3단계 인사이트 생성:
-  Step 1. TrendInsightBuilder  — SNS 트렌드 키워드 해석 + AP 제품 연결 (VOC 없음)
-  Step 2. ProductInsightBuilder — AP 제품별 VOC + 리테일 분석 + 전략 사분면
+  Step 1. TrendInsightBuilder  — SNS 트렌드 키워드 해석 + 브랜드·제품 연결 (VOC 없음)
+  Step 2. ProductInsightBuilder — 제품별 VOC + 리테일 분석 + 전략 사분면
            └ VOC 수집 트리거: fact_llm_insight_products + fact_retail_rankings 대상
   Step 3. InboundPickBuilder   — 방한 관광객 추천 제품 선정 (VOC 보조, Step 2 재사용)
   Step 4. ReportBuilder        — HTML 리포트 + CSV 익스포트
 
-기회 유형 (opportunity_type):
-  amplify   : AP 제품 보유 + 높은 모멘텀 → 즉시 강화
-  position  : AP 제품 보유 + 경쟁사 동반 언급 → 차별화 포지셔닝
-  counter   : AP 제품 없음 + 경쟁사 점유 → 대응 필요
-  new_entry : AP 제품 없음 + 경쟁사 없음 → 신규 진입 기회
+기회 유형 (opportunity_type) — 특정 회사 관점 없이 브랜드 경쟁 구도로 분류:
+  leader      : 연결·언급된 브랜드가 1개 → 한 브랜드가 트렌드를 선점
+  contested   : 2개 이상 브랜드가 연결·언급 → 경쟁 구도
+  white_space : 연결 제품·브랜드 언급 없음 → 아직 주인이 없는 트렌드
+(이전 AP 관점 유형 amplify/position/counter/new_entry 는 과거 주차 데이터에만 남아 있다)
 
 전략 사분면 (strategy_quad):
   PUSH_NOW    : 리테일 상위 + VOC 긍정 ≥ 0.65
@@ -37,6 +37,20 @@ from tools.report.html_report_tool    import HTMLReportTool
 from tools.report.tableau_export_tool import TableauExportTool
 
 logger = logging.getLogger(__name__)
+
+# 제품 인사이트·VOC(리뷰) 수집 대상.
+# 랭킹이 전 브랜드(주당 ~450개)로 늘어나 전부 대상으로 하면 리뷰 스크랩이 1.5시간+ 걸리므로,
+# LLM 이 트렌드와 연결한 제품 + 추적 브랜드 중 카테고리별 TOP_RANK 이내 제품으로 한정한다.
+TOP_RANK = 30
+TARGET_PRODUCTS_SQL = f"""
+    SELECT product_id FROM fact_llm_insight_products WHERE week = ?
+    UNION
+    SELECT r.product_id
+    FROM fact_retail_rankings r
+    JOIN dim_product p2 ON p2.product_id = r.product_id
+    JOIN dim_brand   b2 ON b2.brand_id   = p2.brand_id
+    WHERE r.week = ? AND b2.is_tracked = 1 AND r.rank_position <= {TOP_RANK}
+"""
 
 
 class DecisionAgent:
@@ -61,7 +75,7 @@ class DecisionAgent:
     # ─────────────────────────────────────────────────────────
     def _build_trend_insights(self, analysis: dict) -> int:
         """
-        SNS 트렌드 키워드 해석 + AP 제품 연결.
+        SNS 트렌드 키워드 해석 + 브랜드·제품 연결.
         입력: sns_anomalies, momentum, llm_insights (analysis dict)
         출력: fact_trend_insights
         """
@@ -99,7 +113,7 @@ class DecisionAgent:
             logger.warning("TrendInsight: 인사이트 데이터 없음 — 스킵")
             return 0
 
-        # keyword → 연결 AP 제품 매핑
+        # keyword → 연결 제품 매핑 (브랜드 무관)
         with self._conn() as conn:
             ip_rows = conn.execute("""
                 SELECT lip.keyword, lip.product_id, lip.match_type,
@@ -135,13 +149,11 @@ class DecisionAgent:
                 if not match.empty:
                     mom_row = match.iloc[0].to_dict()
 
-            # 연결 AP 제품
-            linked   = kw_to_products.get(kw, [])
-            prod_ids = [p["product_id"] for p in linked]
-            brand_ids = list({p["brand_id"] for p in linked})
+            # 연결 제품 (브랜드 무관)
+            linked    = kw_to_products.get(kw, [])
+            prod_ids  = [p["product_id"] for p in linked]
+            brand_ids = list(dict.fromkeys(p["brand_id"] for p in linked))
 
-            # 기회 유형 분류
-            has_ap        = bool(linked)
             momentum_score = float(mom_row.get("momentum_score", 0.0))
             weeks_rising   = int(mom_row.get("weeks_rising", 0))
             z_score        = float(sns_row.get("z_score", 0.0) or 0.0)
@@ -163,22 +175,24 @@ class DecisionAgent:
             else:
                 trend_shape = "steady"
 
+            # 캡션에 언급된 브랜드 (컬럼명 competitor_mentions 는 호환용, 의미는 '전체 브랜드 언급')
             try:
-                competitors = json.loads(insight.get("competitor_mentions") or "{}")
-                if not isinstance(competitors, dict):
-                    competitors = {}
+                mentions = json.loads(insight.get("competitor_mentions") or "{}")
+                if not isinstance(mentions, dict):
+                    mentions = {}
             except Exception:
-                competitors = {}
-            has_competitor = bool(competitors)
+                mentions = {}
 
-            if has_ap and is_rising_trend:
-                opp_type = "amplify"
-            elif has_ap and has_competitor:
-                opp_type = "position"
-            elif not has_ap and has_competitor:
-                opp_type = "counter"
+            # 경쟁 구도: 연결 제품의 브랜드 + 캡션 언급 브랜드 (표기 차이는 slug 로 통일)
+            from tools.collect.brand_registry import slugify
+            players = list(dict.fromkeys(brand_ids + [slugify(m) for m in mentions if slugify(m)]))
+            if not players:
+                opp_type = "white_space"
+            elif len(players) == 1:
+                opp_type = "leader"
             else:
-                opp_type = "new_entry"
+                opp_type = "contested"
+            competitors = mentions  # 아래 저장·문구 함수와의 호환용 이름
 
             insight_summary = self._trend_insight_text(
                 kw, opp_type, brand_ids,
@@ -225,45 +239,39 @@ class DecisionAgent:
         return saved
 
     def _trend_insight_text(
-        self, kw, opp_type, brand_ids, consumer_need, opportunity, competitors, sns_row
+        self, kw, opp_type, brand_ids, consumer_need, opportunity, mentions, sns_row
     ) -> str:
-        # AP/경쟁사 관계만 서술 (Z·포스트 등 통계 수치, 소비자 니즈는 제외)
-        brands   = ", ".join(b.upper() for b in brand_ids) if brand_ids else "없음"
-        comp_str = ", ".join(competitors.keys()) if competitors else ""
-
-        if opp_type == "amplify":
-            return f"AP 브랜드({brands})가 해당 포지션을 점유 중 — 즉시 확장 가능."
-        elif opp_type == "position":
-            return f"AP({brands}) 제품이 있으나 경쟁사({comp_str})와 동반 언급 중."
-        elif opp_type == "counter":
-            return f"경쟁사({comp_str})가 선점 중이며 AP 대응 제품 부재."
+        # 브랜드 경쟁 구도만 서술 (Z·포스트 등 통계 수치, 소비자 니즈는 제외)
+        linked = ", ".join(b.upper() for b in brand_ids[:4]) if brand_ids else ""
+        named  = ", ".join(list(mentions.keys())[:4]) if mentions else ""
+        if opp_type == "leader":
+            who = linked or named
+            return f"{who}이(가) '{kw}' 트렌드를 사실상 단독으로 이끄는 중."
+        elif opp_type == "contested":
+            who = ", ".join(dict.fromkeys([x for x in (linked, named) if x]))
+            return f"여러 브랜드가 경쟁 중 — {who}."
         else:
-            return f"AP 미진입 화이트스페이스 — {opportunity or '신규 진입 검토 필요'}."
+            return f"연결된 K-뷰티 제품·브랜드 없음 (화이트스페이스) — {opportunity or '진입 여지 검토 필요'}."
 
     def _trend_action_text(self, kw, opp_type, brand_ids, insight, mom_row) -> str:
-        brands = ", ".join(b.upper() for b in brand_ids) if brand_ids else ""
-        lead   = mom_row.get("lead_platform", "TikTok")
+        brands = ", ".join(b.upper() for b in brand_ids[:3]) if brand_ids else ""
+        lead   = mom_row.get("lead_platform") or "TikTok"
         opp    = insight.get("opportunity", "")
 
-        if opp_type == "amplify":
+        if opp_type == "leader":
             return (
-                f"{brands} 브랜드의 '{kw}' 중심 {lead} 콘텐츠 강화. "
-                "인플루언서 협업 및 검색광고 입찰 즉시 검토."
+                f"선도 브랜드{f'({brands})' if brands else ''}의 '{kw}' 제품 구성과 {lead} 콘텐츠를 벤치마크. "
+                "후발 진입 시 차별 편익이 필요."
             )
-        elif opp_type == "position":
+        elif opp_type == "contested":
             return (
-                f"{brands} 제품 차별화 메시지 강화. "
-                f"경쟁사 대비 고유 편익을 {lead} 콘텐츠에 부각."
-            )
-        elif opp_type == "counter":
-            return (
-                f"'{kw}' 포지션 대응을 위한 기존 라인 확장 검토. "
-                f"경쟁사 점유 전 {lead} 노출 선점."
+                f"브랜드별 언급량·랭킹을 비교해 우위 브랜드 확인. "
+                f"'{kw}' 수요 안에서 비어 있는 세부 니즈(제형·가격대·피부 타입) 탐색."
             )
         else:
             return (
-                f"'{kw}' 트렌드 대응 신제품 기획 검토. "
-                + (f"기회: {opp}." if opp else "카테고리 진입 가능성 평가 권장.")
+                f"'{kw}' 트렌드에 대응하는 K-뷰티 제품이 아직 없음 — 신제품·라인 확장 기회. "
+                + (f"기회: {opp}." if opp else "")
             )
 
     # ─────────────────────────────────────────────────────────
@@ -275,11 +283,7 @@ class DecisionAgent:
             rows = conn.execute("""
                 SELECT DISTINCT p.product_id, p.sephora_pid, p.oy_prdtno
                 FROM dim_product p
-                WHERE p.product_id IN (
-                    SELECT product_id FROM fact_llm_insight_products WHERE week=?
-                    UNION
-                    SELECT product_id FROM fact_retail_rankings WHERE week=?
-                )
+                WHERE p.product_id IN (""" + TARGET_PRODUCTS_SQL + """)
             """, (self.week, self.week)).fetchall()
 
         targets = []
@@ -368,7 +372,7 @@ class DecisionAgent:
 
     def _build_product_insights(self) -> int:
         """
-        AP 제품별 리테일 + VOC 분석 → 전략 사분면.
+        제품별 리테일 + VOC 분석 → 전략 사분면.
         VOC 수집 트리거 포함.
         출력: fact_product_insights
         """
@@ -381,11 +385,7 @@ class DecisionAgent:
                                 p.category_main, b.tier
                 FROM dim_product p
                 JOIN dim_brand b ON p.brand_id = b.brand_id
-                WHERE p.product_id IN (
-                    SELECT product_id FROM fact_llm_insight_products WHERE week=?
-                    UNION
-                    SELECT product_id FROM fact_retail_rankings WHERE week=?
-                )
+                WHERE p.product_id IN (""" + TARGET_PRODUCTS_SQL + """)
             """, (self.week, self.week)).fetchall()
 
             retail_rows = conn.execute("""

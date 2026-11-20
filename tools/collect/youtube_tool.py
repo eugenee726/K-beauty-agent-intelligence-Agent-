@@ -20,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 from googleapiclient.discovery import build
 
+from tools.collect.sns_terms import kbeauty_terms, target_queries
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,55 +30,11 @@ class YouTubeTool:
 
     PLATFORM_ID = "youtube"
 
-    # ── 검색 쿼리 목록 ──────────────────────────────────
-    TARGET_QUERIES: list[str] = [
-        # 일반 K-beauty
-        "kbeauty", "k-beauty skincare", "korean skincare routine",
-        "korean beauty", "kbeauty review", "kbeauty haul", "oliveyoung", 
-        "skincare routine", "skincare product", "skincare review", "skincare haul",
-        # AP 브랜드 전체 (dim_brand 기준)
-        "cosrx review", "laneige review", "innisfree review",
-        "sulwhasoo review", "hera skincare", "primera skincare",
-        "tata harper review", "iope skincare", "aestura skincare",
-        "mamonde review", "hanyul skincare", "espoir review",
-        "etude house review",
-    ]
-
-    # ── K-beauty 키워드 사전 (TikTok과 동일) ───────────
-    KBEAUTY_TERMS: set[str] = {
-        # 성분
-        "niacinamide", "hyaluronic acid", "ceramide", "retinol",
-        "vitamin c", "centella", "cica", "snail mucin", "propolis",
-        "tranexamic acid", "azelaic acid", "bakuchiol", "peptide",
-        "salicylic acid", "glycolic acid", "aha", "bha", "spf",
-        "panthenol", "allantoin", "beta glucan", "galactomyces",
-        "mugwort", "ginseng", "green tea", "rice water", "fermented",
-        "polyglutamic acid", "adenosine", "arbutin", "kojic acid",
-        # 제품 유형
-        "serum", "essence", "toner", "moisturizer", "cleanser",
-        "sheet mask", "sleeping mask", "ampoule", "cushion",
-        "sunscreen", "sunstick", "toner pad", "lip tint",
-        "eye cream", "cleansing oil", "foam cleanser",
-        # 브랜드
-        "cosrx", "laneige", "innisfree", "sulwhasoo", "hera",
-        "some by mi", "beauty of joseon", "torriden", "anua",
-        "isntree", "skin1004", "numbuzin", "round lab", "klairs",
-        "tirtir", "romand", "peripera", "dr jart", "iope",
-        "primera", "aestura", "mamonde", "hanyul", "espoir", "etude",
-        # 피부 고민
-        "acne", "pore", "wrinkle", "brightening", "dark spot",
-        "redness", "sensitive skin", "barrier", "hyperpigmentation",
-        # 루틴
-        "skincare routine", "glass skin", "dewy skin",
-        "skin cycling", "slugging", "double cleanse",
-        "morning routine", "night routine", "layering",
-        # K-beauty 일반
-        "kbeauty", "k-beauty", "korean skincare", "korean beauty",
-        "asian beauty",
-    }
-
     def __init__(self, db_path: str, api_key: str, min_engagement: float = 100.0):
         self.db_path = db_path
+        # 수집 대상·키워드 사전은 dim_brand 기반으로 만든다 (tools/collect/sns_terms.py)
+        self.TARGET_QUERIES = target_queries(db_path)
+        self.KBEAUTY_TERMS  = kbeauty_terms(db_path)
         self.api_key = api_key
         self.min_engagement = min_engagement
         self._youtube = None

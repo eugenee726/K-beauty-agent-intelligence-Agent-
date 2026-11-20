@@ -9,7 +9,7 @@ Sephora US 수집 툴 — 아모레퍼시픽 제품 전용.
   · Sephora는 트렌드 확정 후 영어 소비자 반응(VOC) 수집 용도로만 사용.
 
 수집 항목:
-  A) build_catalog()    — BV Products API로 AP 브랜드 전 제품 수집 → dim_product
+  A) build_catalog()    — BV Products API로 추적 브랜드(Sephora 입점) 전 제품 수집 → dim_product
                           + Playwright로 성분(key_ingredients) 스크랩
   B) fetch_reviews_bv() — BV Reviews API VOC 수집 (VocCollector에서 호출)
 
@@ -28,6 +28,8 @@ import json
 import re
 import sqlite3
 import logging
+
+from tools.collect.brand_registry import load_brands
 import time
 import requests
 from datetime import datetime, timezone
@@ -49,15 +51,7 @@ BV_HEADERS = {
     "Referer": "https://www.sephora.com/",
 }
 
-# Sephora US 실제 입점 AP 브랜드 (brand_id, BV 검색 키워드)
-# COSRX는 Sephora US 미입점 확인됨
-AP_BV_BRANDS: list[tuple[str, str]] = [
-    ("aestura",     "AESTURA"),
-    ("laneige",     "LANEIGE"),
-    ("innisfree",   "INNISFREE"),
-    ("sulwhasoo",   "Sulwhasoo"),
-    ("tata_harper", "Tata Harper"),
-]
+# Sephora US 입점 브랜드 목록은 dim_brand.sephora_bv_name 에서 읽는다 (brand_registry)
 
 # Sephora US PID 형식: 'P' + 숫자 (예: P521415)
 SEPHORA_PID_PATTERN = re.compile(r'^P\d+$')
@@ -569,7 +563,11 @@ class SephoraTool:
         logger.info("Sephora 카탈로그 구축 시작 (BazaarVoice API)")
         all_products: list[dict] = []
 
-        for brand_id, bv_brand_name in AP_BV_BRANDS:
+        with self._conn() as conn:
+            bv_brands = [(b["brand_id"], b["sephora_bv_name"])
+                         for b in load_brands(conn, tracked_only=True) if b.get("sephora_bv_name")]
+        logger.info(f"Sephora 대상 브랜드 {len(bv_brands)}개")
+        for brand_id, bv_brand_name in bv_brands:
             results = self._fetch_bv_products(bv_brand_name)
             for r in results:
                 sephora_pid = r.get("Id", "")

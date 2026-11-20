@@ -26,7 +26,7 @@ from typing import Union
 
 from playwright.async_api import async_playwright
 from tools.collect.brand_registry import (
-    BrandMatcher, load_brands, register_observed_brand, slugify,
+    BrandMatcher, load_brands, register_observed_brand, set_oy_brand_no, slugify,
 )
 from tools.collect._product_utils import next_product_id, find_matching_product
 
@@ -72,6 +72,7 @@ async def _scrape_product_detail(page, prdtno: str) -> dict:
         "category_sub":    None,
         "key_ingredients": None,
         "key_benefits":    None,
+        "brand_no":        None,   # 브랜드 페이지 링크의 brandNo (dim_brand 자동 보완용)
     }
     try:
         # domcontentloaded 후 Vue.js 렌더링 대기 (networkidle은 SPA에서 안 끝남)
@@ -81,6 +82,11 @@ async def _scrape_product_detail(page, prdtno: str) -> dict:
         except Exception:
             pass
         await page.wait_for_timeout(2000)
+
+        # ── 브랜드 번호: 브랜드 페이지 링크 ──
+        m = re.search(r"brandNo=([A-Z0-9]+)", await page.content())
+        if m:
+            result["brand_no"] = m.group(1)
 
         # ── 카테고리: 브레드크럼 ──
         cats = await page.query_selector_all("span.loc_cat")
@@ -335,6 +341,9 @@ class OYGlobalTool:
                             rank = int((await rank_el.inner_text()).strip())
                         except ValueError:
                             pass
+                    if not rank:
+                        # 순위 배지가 없거나 숫자가 아닌 타일 → 페이지 내 순서로 대체 (0 저장 방지)
+                        rank = len(results) + 1
 
                     # URL
                     link_el = await tile.query_selector("a[href*='prdtNo']")
@@ -449,6 +458,8 @@ class OYGlobalTool:
                         rank = int((await rank_el.inner_text()).strip())
                     except ValueError:
                         pass
+                if not rank:
+                    rank = len(results) + 1  # 배지 없는 타일 → 페이지 내 순서
 
                 link_el = await tile.query_selector("a[href*='prdtNo']")
                 href = (await link_el.get_attribute("href") or "") if link_el else ""
@@ -904,6 +915,7 @@ class OYGlobalTool:
         with self._conn() as conn:
             matcher = BrandMatcher(load_brands(conn))
         observed_brands: dict[str, str] = {}  # 처음 보는 brand_id → 표시명
+        brand_nos: dict[str, str] = {}        # brand_id → 상세 페이지에서 알아낸 OY brandNo
         ranking_rows: list[tuple] = []
         new_products: list[dict]  = []
 
@@ -994,6 +1006,8 @@ class OYGlobalTool:
                         p["category_sub"]    = detail["category_sub"]
                         p["key_ingredients"] = detail["key_ingredients"]
                         p["key_benefits"]    = detail["key_benefits"]
+                        if detail.get("brand_no"):
+                            brand_nos[p["brand_id"]] = detail["brand_no"]
                     await page.wait_for_timeout(500)
 
             await browser.close()
@@ -1005,6 +1019,8 @@ class OYGlobalTool:
             # 처음 보는 브랜드를 dim_brand 에 먼저 등록 (없으면 JOIN dim_brand 에서 누락됨)
             for bid, display in observed_brands.items():
                 register_observed_brand(conn, display)
+            for bid, bno in brand_nos.items():
+                set_oy_brand_no(conn, bid, bno)
             for p in new_products:
                 try:
                     # 서로게이트 키 채번

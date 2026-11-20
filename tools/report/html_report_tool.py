@@ -4,7 +4,7 @@ html_report_tool.py
 K-beauty Intelligence HTML 리포트 생성 툴.
 
 3-Tab 구조:
-  Tab 1. 트렌드 인사이트  — fact_trend_insights (키워드 × AP 제품 × 기회 유형)
+  Tab 1. 트렌드 인사이트  — fact_trend_insights (키워드 × 브랜드·제품 × 경쟁 구도)
   Tab 2. 제품 전략        — fact_product_insights (전략 사분면 × VOC × 리테일)
   Tab 3. 방한 추천        — fact_inbound_picks (방한 관광객 추천 Top 15)
 
@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 
 # ── 기회 유형 / 전략 사분면 한국어 + 색상 매핑 ──
 OPP_META = {
+    # 현재 유형 (브랜드 중립 경쟁 구도)
+    "leader":      {"label": "선도 브랜드",   "color": "#6a1b9a", "bg": "#f3e5f5"},
+    "contested":   {"label": "경쟁 구도",     "color": "#1565c0", "bg": "#e3f2fd"},
+    "white_space": {"label": "화이트스페이스", "color": "#2e7d32", "bg": "#e8f5e9"},
+    # 과거 주차(AP 관점) 데이터 표시용
     "amplify":   {"label": "즉시 강화",     "color": "#e91e8c", "bg": "#ffe0f0"},
     "position":  {"label": "차별화",        "color": "#1565c0", "bg": "#e3f2fd"},
     "counter":   {"label": "대응 필요",     "color": "#e65100", "bg": "#fff3e0"},
@@ -28,11 +33,15 @@ OPP_META = {
 }
 # 기회 유형 짧은 설명 (요약 카드용)
 OPP_DESC = {
-    "amplify":   "AP 제품 보유 + 지속 상승",
-    "position":  "AP 제품 보유 + 경쟁사 동반",
-    "counter":   "AP 미보유 + 경쟁사 선점",
-    "new_entry": "AP 미보유 + 화이트스페이스",
+    "leader":      "한 브랜드가 트렌드를 선점",
+    "contested":   "여러 브랜드가 경쟁",
+    "white_space": "연결 제품·브랜드 없음",
+    "amplify":   "(과거 기준) 자사 제품 보유 + 지속 상승",
+    "position":  "(과거 기준) 자사 제품 보유 + 경쟁 동반",
+    "counter":   "(과거 기준) 자사 미보유 + 경쟁 선점",
+    "new_entry": "(과거 기준) 자사 미보유 + 화이트스페이스",
 }
+CURRENT_OPP_TYPES = ("leader", "contested", "white_space")
 QUAD_META = {
     "PUSH_NOW":    {"label": "PUSH NOW",     "color": "#e91e8c", "bg": "#ffe0f0"},
     "FIX_AND_PUSH":{"label": "FIX & PUSH",  "color": "#e65100", "bg": "#fff3e0"},
@@ -181,8 +190,12 @@ class HTMLReportTool:
             shape_counts[sh] = shape_counts.get(sh, 0) + 1
 
         # 요약 카드 (클릭 = 해당 기회유형 필터, 같은 카드 재클릭 = 전체)
-        summary_html = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.2rem">'
-        for ot, meta in OPP_META.items():
+        # 현재 3개 유형은 항상, 과거(AP 관점) 유형은 해당 주차에 데이터가 있을 때만 표시
+        shown = [ot for ot in OPP_META if ot in CURRENT_OPP_TYPES or opp_counts.get(ot)]
+        summary_html = (f'<div style="display:grid;grid-template-columns:repeat({len(shown)},1fr);'
+                        'gap:1rem;margin-bottom:1.2rem">')
+        for ot in shown:
+            meta = OPP_META[ot]
             cnt  = opp_counts.get(ot, 0)
             desc = OPP_DESC.get(ot, "")
             summary_html += f'''
@@ -234,8 +247,8 @@ class HTMLReportTool:
         # 키워드 카드 목록
         cards_html = ""
         for i, r in enumerate(rows):
-            ot   = r["opportunity_type"] or "new_entry"
-            meta = OPP_META.get(ot, OPP_META["new_entry"])
+            ot   = r["opportunity_type"] or "white_space"
+            meta = OPP_META.get(ot, OPP_META["white_space"])
             try:
                 brands = json.loads(r["ap_brand_ids"] or "[]")
             except Exception:
@@ -250,7 +263,7 @@ class HTMLReportTool:
                 for b in brands
             )
             comp_badges = "".join(
-                f'<span style="background:#fce4ec;color:#b71c1c;border-radius:12px;padding:2px 10px;font-size:0.78rem;margin:2px;display:inline-block">vs {c}</span>'
+                f'<span style="background:#eceff1;color:#37474f;border-radius:12px;padding:2px 10px;font-size:0.78rem;margin:2px;display:inline-block">💬 {c}</span>'
                 for c in list(comps.keys())[:3]
             )
             lead_icon  = "🎵" if r["lead_platform"] == "tiktok" else "▶️" if r["lead_platform"] == "youtube" else "📡"
@@ -304,7 +317,7 @@ class HTMLReportTool:
               <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-start">
                 <div style="flex:1;min-width:240px">
                   <div style="font-size:0.85rem;color:#333;margin-bottom:0.5rem">
-                    <strong style="color:{meta["color"]}">🏷️ AP·경쟁사 관계</strong> · {r["insight_summary"] or ""}
+                    <strong style="color:{meta["color"]}">🏷️ 브랜드 경쟁 구도</strong> · {r["insight_summary"] or ""}
                   </div>
                   {need_html}
                   {ev_html}
@@ -340,7 +353,7 @@ class HTMLReportTool:
             <ol style="margin:0.3rem 0 0 1.2rem;padding:0;color:#666">
               <li>SNS 키워드별 Z-score 계산 (TikTok+YouTube 합산)</li>
               <li>이상치 키워드 선별: <b>Z-score ≥ 2.0</b> (is_anomaly)</li>
-              <li>광의어·AP 브랜드·경쟁사 키워드 제외 (kbeauty, laneige 등)</li>
+              <li>광의어·브랜드명 키워드 제외 (kbeauty, laneige 등 — 브랜드는 별도 집계)</li>
               <li>실행 가능 볼륨 확보: <b>포스트 수 ≥ 5</b></li>
               <li>분석 신뢰도 확보: 캡션 샘플 ≥ 3건</li>
               <li>상위 <b>최대 10개</b> 키워드 → LLM 인사이트 분석</li>
@@ -812,7 +825,7 @@ class HTMLReportTool:
 
 <header>
   <h1> K-beauty Intelligence Report</h1>
-  <p>Amorepacific US Market<br>
+  <p>US K-beauty Market<br>
   <strong>{week}</strong> · {week_label} · Generated {ts}</p>
   <div style="margin-top:0.7rem;font-size:0.8rem;opacity:0.9;display:flex;gap:1.5rem;flex-wrap:wrap">
     <span><strong>SNS</strong> : TikTok / YouTube</span>
@@ -836,7 +849,7 @@ class HTMLReportTool:
 <div class="section"        id="s1">{product_html}</div>
 <div class="section"        id="s2">{inbound_html}</div>
 
-<footer>K-beauty Intelligence Agent v3 &nbsp;|&nbsp; Amorepacific Portfolio Project</footer>
+<footer>K-beauty Intelligence Agent v3</footer>
 
 <script>
 function switchTab(idx) {{
@@ -884,7 +897,7 @@ function sortProducts(key) {{
     .forEach(tr => tbody.appendChild(tr));
 }}
 
-const OPP_LABELS = {{ amplify:'즉시 강화', position:'차별화', counter:'대응 필요', new_entry:'신규 진입' }};
+const OPP_LABELS = {{ leader:'선도 브랜드', contested:'경쟁 구도', white_space:'화이트스페이스', amplify:'즉시 강화', position:'차별화', counter:'대응 필요', new_entry:'신규 진입' }};
 let _oppFilter = 'ALL', _shapeFilter = 'ALL';
 function applyTrendFilters() {{
   document.querySelectorAll('.trend-card').forEach(c => {{

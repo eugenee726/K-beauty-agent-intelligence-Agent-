@@ -35,23 +35,69 @@ _EXTRA_COLUMNS: list[tuple[str, str]] = [
     ("is_tracked",         "INTEGER DEFAULT 1"),
 ]
 
-# 기존 아모레퍼시픽 13개 브랜드의 수집 메타데이터.
-# (이전 _ap_brands.py / sephora_tool.AP_BV_BRANDS 의 값을 옮겨 온 것)
-_AP_SEED: dict[str, dict] = {
-    "sulwhasoo":   {"sephora_bv_name": "Sulwhasoo"},
-    "hera":        {"oy_global_brand_no": "B01392"},
-    "primera":     {"oy_global_brand_no": "B01191"},
-    "tata_harper": {"sephora_bv_name": "Tata Harper", "aliases": ["tataharper"]},
-    "iope":        {"oy_global_brand_no": "B01210"},
-    "aestura":     {"oy_global_brand_no": "B00214", "sephora_bv_name": "AESTURA"},
-    "mamonde":     {"oy_global_brand_no": "B00234"},
-    "hanyul":      {"oy_global_brand_no": "B00383"},
-    "laneige":     {"oy_global_brand_no": "B00280", "sephora_bv_name": "LANEIGE"},
-    "innisfree":   {"oy_global_brand_no": "B00519", "sephora_bv_name": "INNISFREE"},
-    "cosrx":       {"oy_global_brand_no": "B00095"},
-    "espoir":      {"oy_global_brand_no": "B00210"},
-    "etude":       {"oy_global_brand_no": "B00288", "aliases": ["etude house"]},
+# ── 추적 브랜드 시드 ─────────────────────────────────────────────
+# name: 표시명 / company: 모회사(확인된 것만, 모르면 생략) / oy: OY Global brandNo
+# bv: Sephora BazaarVoice Brand.Name(Sephora US 입점 확인된 것만)
+# tag/query: 전용 TikTok 해시태그·YouTube 검색어 → 있으면 sns_tier='dedicated'
+# aliases: 표기 변형(브랜드 매칭·SNS 키워드 탐지에 사용)
+#
+# 2026-11-20 확정: 기존 아모레퍼시픽 13개 + W47 OY 랭킹 기반 30개.
+# OY brandNo 는 상품 상세 페이지에서, Sephora 이름은 BV API 검색으로 확인했다.
+_AP = "Amorepacific"
+_SEED: dict[str, dict] = {
+    # 아모레퍼시픽 (기존)
+    "sulwhasoo":   {"company": _AP, "bv": "Sulwhasoo", "tag": "sulwhasoo", "query": "sulwhasoo review"},
+    "hera":        {"company": _AP, "oy": "B01392", "tag": "hera", "query": "hera skincare"},
+    "primera":     {"company": _AP, "oy": "B01191", "tag": "primera", "query": "primera skincare"},
+    "tata_harper": {"company": _AP, "bv": "Tata Harper", "aliases": ["tataharper"], "tag": "tataharper", "query": "tata harper review"},
+    "iope":        {"company": _AP, "oy": "B01210", "tag": "iope", "query": "iope skincare"},
+    "aestura":     {"company": _AP, "oy": "B00214", "bv": "AESTURA", "tag": "aestura", "query": "aestura skincare"},
+    "mamonde":     {"company": _AP, "oy": "B00234", "tag": "mamonde", "query": "mamonde review"},
+    "hanyul":      {"company": _AP, "oy": "B00383", "tag": "hanyul", "query": "hanyul skincare"},
+    "laneige":     {"company": _AP, "oy": "B00280", "bv": "LANEIGE", "tag": "laneige", "query": "laneige review"},
+    "innisfree":   {"company": _AP, "oy": "B00519", "bv": "INNISFREE", "tag": "innisfree", "query": "innisfree review"},
+    "cosrx":       {"company": _AP, "oy": "B00095", "tag": "cosrx", "query": "cosrx review"},
+    "espoir":      {"company": _AP, "oy": "B00210", "tag": "espoir", "query": "espoir review"},
+    "etude":       {"company": _AP, "oy": "B00288", "aliases": ["etude house"], "tag": "etude", "query": "etude house review"},
+    # 신규 — 전용 SNS 수집 15개
+    "mediheal":         {"name": "MEDIHEAL", "company": "L&P Cosmetic", "oy": "B00051", "tag": "mediheal", "query": "mediheal review"},
+    "numbuzin":         {"name": "numbuzin", "oy": "B00423", "tag": "numbuzin", "query": "numbuzin review"},
+    "torriden":         {"name": "Torriden", "oy": "B00256", "bv": "Torriden", "tag": "torriden", "query": "torriden review"},
+    "anua":             {"name": "Anua", "oy": "B00399", "bv": "Anua", "tag": "anua", "query": "anua review"},
+    "round_lab":        {"name": "ROUND LAB", "oy": "B00244", "aliases": ["round lab", "roundlab"], "tag": "roundlab", "query": "round lab review"},
+    "skin1004":         {"name": "SKIN1004", "company": "Craver Corporation", "oy": "B00568", "tag": "skin1004", "query": "skin1004 review"},
+    "beauty_of_joseon": {"name": "Beauty of Joseon", "company": "Goodai Global", "oy": "B00664", "bv": "Beauty of Joseon", "tag": "beautyofjoseon", "query": "beauty of joseon review"},
+    "medicube":         {"name": "medicube", "company": "APR", "oy": "B00177", "tag": "medicube", "query": "medicube review"},
+    "dr_jart":          {"name": "Dr.Jart+", "company": "Estée Lauder Companies", "oy": "B00061", "bv": "Dr. Jart+", "aliases": ["dr jart", "dr. jart", "dr.jart"], "tag": "drjart", "query": "dr jart review"},
+    "tirtir":           {"name": "TIRTIR", "company": "Goodai Global", "oy": "B00973", "tag": "tirtir", "query": "tirtir review"},
+    "biodance":         {"name": "BIODANCE", "oy": "B00975", "bv": "Biodance", "tag": "biodance", "query": "biodance review"},
+    "rejuran":          {"name": "REJURAN", "company": "PharmaResearch", "oy": "B00604", "bv": "Rejuran", "tag": "rejuran", "query": "rejuran review"},
+    "abib":             {"name": "Abib", "oy": "B00132", "bv": "Abib", "tag": "abib", "query": "abib review"},
+    "rom_nd":           {"name": "rom&nd", "oy": "B00155", "aliases": ["romand", "rom nd"], "tag": "romand", "query": "romand review"},
+    "d_alba":           {"name": "d'Alba", "company": "d'Alba Global", "oy": "B00246", "aliases": ["dalba", "d alba"], "tag": "dalba", "query": "d'alba review"},
+    # 신규 — 키워드 탐지만 15개
+    "bioheal_boh":    {"name": "BIOHEAL BOH", "company": "CJ Olive Young", "oy": "B00099", "bv": "BIOHEAL BOH", "aliases": ["bioheal boh", "bioheal"]},
+    "wakemake":       {"name": "wakemake", "company": "CJ Olive Young", "oy": "B00065"},
+    "celimax":        {"name": "celimax", "oy": "B00285"},
+    "beplain":        {"name": "beplain", "oy": "B00259", "bv": "beplain"},
+    "wellage":        {"name": "WELLAGE", "company": "Hugel", "oy": "B00185", "bv": "WELLAGE"},
+    "clio":           {"name": "CLIO", "company": "CLIO Cosmetics", "oy": "B00064", "aliases": ["clio cosmetics"]},
+    "centellian24":   {"name": "Centellian24", "company": "Dongkook Pharmaceutical", "oy": "B00270", "aliases": ["centellian 24"]},
+    "dr_althea":      {"name": "Dr. Althea", "oy": "B00157", "aliases": ["dr althea", "dr.althea"]},
+    "vt":             {"name": "VT", "oy": "B00168", "aliases": ["vt cosmetics", "vt reedle shot", "reedle shot"]},
+    "purito_seoul":   {"name": "Purito Seoul", "oy": "B01347", "aliases": ["purito"]},
+    "amuse":          {"name": "AMUSE", "oy": "B00505", "aliases": ["amuse makeup", "amuse jel fit tint"]},
+    "isntree":        {"name": "Isntree", "oy": "B00160"},
+    "mixsoon":        {"name": "mixsoon"},
+    "medicube_age_r": {"name": "MEDICUBE AGE-R", "company": "APR", "oy": "B01121", "aliases": ["age-r", "age r", "ager booster"]},
+    "aprilskin":      {"name": "APRILSKIN", "company": "APR", "aliases": ["april skin"]},
 }
+
+# SNS 키워드 탐지에 쓰기에는 너무 짧거나 일반 영어 단어와 겹치는 표시명 (별칭만 사용)
+_AMBIGUOUS_NAMES = {"vt", "amuse"}
+
+# 시드 버전. 올리면 is_tracked 를 시드 기준으로 다시 맞춘다 (한 번만 적용).
+_SEED_VERSION = 2
 
 
 def slugify(name: str) -> str:
@@ -70,22 +116,47 @@ def ensure_brand_schema(conn: sqlite3.Connection) -> None:
         if name not in cols:
             conn.execute(f"ALTER TABLE dim_brand ADD COLUMN {name} {decl}")
 
-    # AP 시드: 비어 있는 값만 채우므로(COALESCE) 매번 실행해도 사용자 수정값을 덮어쓰지 않는다.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS meta_registry (key TEXT PRIMARY KEY, value TEXT)"
+    )
+    row = conn.execute("SELECT value FROM meta_registry WHERE key = 'brand_seed_version'").fetchone()
+    applied = int(row[0]) if row else 0
+
+    # 시드: 빈 값만 채우므로(COALESCE) 매번 실행해도 사용자가 고친 값을 덮어쓰지 않는다.
     # schema.sql 이 시작 시마다 재실행되므로 새 DB 에서도 여기서 시드된다.
-    for bid, meta in _AP_SEED.items():
+    for bid, m in _SEED.items():
+        name = m.get("name") or bid
+        conn.execute(
+            """INSERT OR IGNORE INTO dim_brand (brand_id, brand_name_en, sns_keywords, is_tracked)
+               VALUES (?, ?, ?, 1)""",
+            (bid, name, json.dumps([name.lower(), *m.get("aliases", [])])),
+        )
         conn.execute(
             """UPDATE dim_brand SET
-                   company            = COALESCE(company, 'Amorepacific'),
+                   company            = COALESCE(company, ?),
                    aliases            = COALESCE(aliases, ?),
                    oy_global_brand_no = COALESCE(oy_global_brand_no, ?),
-                   sephora_bv_name    = COALESCE(sephora_bv_name, ?)
+                   sephora_bv_name    = COALESCE(sephora_bv_name, ?),
+                   tiktok_hashtag     = COALESCE(tiktok_hashtag, ?),
+                   youtube_query      = COALESCE(youtube_query, ?)
                WHERE brand_id = ?""",
             (
-                json.dumps(meta["aliases"]) if meta.get("aliases") else None,
-                meta.get("oy_global_brand_no"),
-                meta.get("sephora_bv_name"),
+                m.get("company"),
+                json.dumps(m["aliases"]) if m.get("aliases") else None,
+                m.get("oy"), m.get("bv"), m.get("tag"), m.get("query"),
                 bid,
             ),
+        )
+        if applied < _SEED_VERSION:
+            # 랭킹 수집이 is_tracked=0 으로 자동 등록해 둔 브랜드를 정식 추적으로 전환 (1회만)
+            conn.execute(
+                "UPDATE dim_brand SET is_tracked = 1, sns_tier = ? WHERE brand_id = ?",
+                ("dedicated" if m.get("tag") else "keyword_only", bid),
+            )
+    if applied < _SEED_VERSION:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta_registry (key, value) VALUES ('brand_seed_version', ?)",
+            (str(_SEED_VERSION),),
         )
     conn.commit()
 
@@ -126,6 +197,40 @@ class BrandMatcher:
         """브랜드 필드 값(예: 타일의 브랜드명)을 정확히 매칭. 표기 차이는 slugify 로 흡수."""
         key = (brand_name or "").lower().strip()
         return self._exact.get(key) or self._exact.get(slugify(key).replace("_", " "))
+
+
+def brand_terms(brands: list[dict]) -> set[str]:
+    """
+    SNS 캡션에서 브랜드를 탐지할 소문자 용어 집합 (표시명 + 별칭).
+    너무 짧거나 일반 단어와 겹치는 표시명은 빼고 별칭만 쓴다.
+    """
+    terms: set[str] = set()
+    for b in brands:
+        name = (b.get("brand_name_en") or "").lower().strip()
+        if name and len(name) > 2 and name not in _AMBIGUOUS_NAMES:
+            terms.add(name)
+        try:
+            terms.update(a.lower().strip() for a in json.loads(b.get("aliases") or "[]"))
+        except (TypeError, ValueError):
+            pass
+    return {t for t in terms if t}
+
+
+def dedicated_sns_targets(conn: sqlite3.Connection) -> tuple[list[str], list[str]]:
+    """전용 수집 대상 (TikTok 해시태그 목록, YouTube 검색어 목록). 추적 + dedicated 브랜드만."""
+    brands = [b for b in load_brands(conn, tracked_only=True) if b.get("sns_tier") == "dedicated"]
+    tags = sorted({b["tiktok_hashtag"] for b in brands if b.get("tiktok_hashtag")})
+    queries = sorted({b["youtube_query"] for b in brands if b.get("youtube_query")})
+    return tags, queries
+
+
+def set_oy_brand_no(conn: sqlite3.Connection, brand_id: str, brand_no: str) -> None:
+    """상품 상세 페이지에서 알아낸 OY brandNo 를 비어 있을 때만 기록."""
+    if brand_id and brand_no:
+        conn.execute(
+            "UPDATE dim_brand SET oy_global_brand_no = COALESCE(oy_global_brand_no, ?) WHERE brand_id = ?",
+            (brand_no, brand_id),
+        )
 
 
 def register_observed_brand(conn: sqlite3.Connection, display_name: str) -> str | None:

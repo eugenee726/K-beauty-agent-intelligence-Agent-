@@ -34,18 +34,27 @@ logger = logging.getLogger(__name__)
 # LLM·Decision과 동일한 볼륨 하한
 MIN_POST_COUNT = StatsTool.MIN_POST_COUNT
 
-# LLM 후보에서 제외 (광의어·경쟁사·AP 브랜드 — brand_momentum에서 별도 추적)
-EXCLUDE_KEYWORDS = {
+# LLM 후보에서 제외: 광의어 + 브랜드명 (브랜드는 brand_momentum·리포트 브랜드 집계에서 따로 다룬다)
+# 브랜드 부분은 dim_brand 에서 만든다 → _exclude_keywords()
+GENERIC_EXCLUDE = {
     "kbeauty", "korean_beauty", "korean_skincare", "skincare_routine", "k-beauty",
     "k_beauty", "routine", "morning_routine", "night_routine",
-    "anua", "torriden", "beauty_of_joseon", "skin1004", "round_lab",
-    "medicube", "mixsoon", "goodal", "isntree", "manyo", "iunik",
-    "purito", "abib", "haruharu", "axis_y", "cosrx_rival",
-    "cerave", "la_roche_posay", "bioderma", "avene", "neutrogena",
-    "sulwhasoo", "hera", "primera", "tata_harper", "tata harper",
-    "iope", "aestura", "mamonde", "hanyul", "laneige",
-    "innisfree", "cosrx", "espoir", "etude", "etude house",
 }
+# 추적 대상이 아닌 해외·기타 브랜드 (이전부터 제외하던 목록 유지)
+OTHER_BRAND_EXCLUDE = {
+    "mixsoon", "goodal", "manyo", "iunik", "haruharu", "axis_y", "cosrx_rival",
+    "cerave", "la_roche_posay", "bioderma", "avene", "neutrogena",
+    "some_by_mi", "klairs", "peripera",
+}
+
+
+def _exclude_keywords(db_path: str) -> set[str]:
+    """광의어 + 모든 추적 브랜드 용어(정규화 형태와 원형 모두)."""
+    import re
+    from tools.collect.sns_terms import kbeauty_terms, GENERIC_TERMS
+    brand = kbeauty_terms(db_path) - GENERIC_TERMS
+    normalized = {re.sub(r"[\s\-&]+", "_", t.strip()) for t in brand}
+    return GENERIC_EXCLUDE | OTHER_BRAND_EXCLUDE | brand | normalized
 
 
 class AnalysisAgent:
@@ -197,7 +206,7 @@ class AnalysisAgent:
                 )
 
                 candidates = candidates[
-                    ~candidates["keyword"].str.lower().isin(EXCLUDE_KEYWORDS)
+                    ~candidates["keyword"].str.lower().isin(_exclude_keywords(self.memory.db_path))
                 ]
                 logger.info(
                     f"  LLM 후보 풀: EXCLUDE 후 {len(candidates)}개 "
