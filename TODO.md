@@ -7,6 +7,8 @@
   - `tools/collect/oy_global_tool.py` Phase 2 페이지 풀 생성부(`browser.new_context` 직후)에
     `page.route("**/*", ...)` 로 image / font / media 요청 abort
   - 카테고리(`span.loc_cat`)가 그대로 수집되는지 소량(20개) 테스트 후 반영
+  - **아코디언 클릭(`link.click()`)에 timeout 미지정 → 기본 30초 대기.** 2개 클릭이라 제품당 최대 1분 낭비
+    → `click(timeout=3000)` 로 제한 (11/20 실행에서 50개 묶음당 약 40분의 주원인으로 추정)
   - 함께 확인: `_scrape_product_detail` 의 고정 대기 2초, 카테고리 미검출 시 재방문 비용
   - 배경: 2 vCPU / 4GB 서버에서 상세 1,356개 방문에 6~8시간 소요 (2026-11-20)
 - [ ] 11/20 카탈로그에서 페이지 로드 실패한 브랜드(Centellian24, medicube) 재수집 확인
