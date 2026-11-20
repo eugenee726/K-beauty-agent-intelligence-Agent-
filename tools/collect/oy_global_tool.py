@@ -631,7 +631,20 @@ class OYGlobalTool:
         # ── Phase 1: 브랜드 페이지에서 전체 제품 링크 수집 ──
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=40_000)
-            await page.wait_for_timeout(3000)
+            # 제품 목록은 AJAX 로 늦게 그려진다. 고정 3초 대기는 동시 수집·저사양 서버에서
+            # 빈 목록을 읽는 원인이었으므로, 타일이 실제로 나타날 때까지 기다리고 1회 재시도한다.
+            tile_sel = "div.product-list div.product-unit"
+            for attempt in range(2):
+                try:
+                    await page.wait_for_selector(tile_sel, timeout=20_000)
+                    break
+                except Exception:
+                    if attempt == 0:
+                        logger.info(f"  카탈로그 [{brand_name}]: 제품 목록 지연 → 새로고침 재시도")
+                        await page.reload(wait_until="domcontentloaded", timeout=40_000)
+                    else:
+                        logger.warning(f"  카탈로그 [{brand_name}]: 제품 목록이 표시되지 않음 (판매 제품 없음 또는 로딩 실패)")
+            await page.wait_for_timeout(1000)
             await self._close_popups(page)
 
             # More 버튼이 사라질 때까지 반복 클릭 (최대 20회)
