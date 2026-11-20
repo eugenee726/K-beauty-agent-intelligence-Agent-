@@ -334,18 +334,25 @@ Orchestrator (Claude API Tool Use 기반 — DB 상태를 보고 필요한 단�
 
 주제가 요구한 **"지속적으로 인사이트·이슈 알림을 제공"** 을 두 층위로 구현했습니다.
 
-### 7-1. Agentic Orchestrator (Claude API Tool Use)
-- 단순 고정 순서가 아니라, **Claude가 DB 상태를 보고 필요한 단계만 실행**하는 ReAct 루프.
-- 이미 처리된 주차는 자동 스킵 → 불필요한 재수집·비용 방지.
+### 7-1. Apache Airflow 오케스트레이션
+- **흐름 제어는 Airflow가 결정적으로, 내용 판단은 LLM이** 담당하는 구조.
+  (이전의 LLM 오케스트레이터는 매번 같은 순서를 고르기만 해서 제거)
+- `kbeauty_weekly` (매주 목 09:00 KST):
+  `check_status → [TikTok | YouTube | OY Global 수집] → 데이터 품질 검사 → 분석 → 의사결정 → 리포트 게시`
+- `kbeauty_catalog` (매월 1일 03:00 KST): OY Global → Sephora 카탈로그 재구축
+- 이미 처리된 주차는 자동 스킵, task별 재시도·타임아웃, 실패 시 Slack 알림(선택)
+- 과거 주차 backfill 시 수집은 건너뛰고 분석·의사결정만 재실행
+- 데이터 품질 검사(결정적)가 실패하면 LLM 단계를 돌리지 않아 비용 낭비 방지
 
-### 7-2. 정기 자동 실행 (스케줄러)
-- **매주 목요일** 전체 파이프라인 자동 실행 → 주간 리포트 생성
-- **매월 1일** 제품 카탈로그 재구축
-- Windows 작업 스케줄러 / APScheduler 두 방식 지원, 실행 로그 자동 기록
+### 7-2. 실행 환경
+- AWS Lightsail(Ubuntu) + Docker Compose(Airflow LocalExecutor + Postgres) — `airflow/` 참고
+- Airflow UI 는 외부 비공개, SSH 터널로 접속
 
 ```bash
-python main.py agentic          # 한 번 실행 (수집→분석→결정→리포트)
-python scheduler.py             # 정기 자동 실행 상주
+cd airflow
+echo "AIRFLOW_UID=$(id -u)" > .env
+docker compose up airflow-init && docker compose up -d
+ssh -L 8080:localhost:8080 ubuntu@<VM_IP>   # 로컬 브라우저에서 localhost:8080
 ```
 
 ---
@@ -368,13 +375,12 @@ python scheduler.py             # 정기 자동 실행 상주
 | 영역 | 사용 |
 |------|------|
 | 언어 | Python 3.11+ |
-| LLM | **Claude Opus 4.8** (Anthropic) — 인사이트 추출 + Agentic Orchestrator |
+| LLM | **Claude Sonnet 5.5** (Anthropic) — 키워드 인사이트 추출 |
 | 수집 | Apify(TikTok), YouTube Data API, Playwright(OliveYoung/Sephora), BazaarVoice API |
 | 분석 | pandas, numpy, scipy(통계), rapidfuzz(제품 매칭) |
 | 저장 | SQLite |
 | 리포트 | HTML + Chart.js (인터랙티브 3-탭) |
-| 자동화 | APScheduler / Windows 작업 스케줄러 |
-| 관측 | LangFuse (선택) |
+| 오케스트레이션 | Apache Airflow 2.10 (Docker Compose, AWS Lightsail) |
 
 ### 실행 방법
 ```bash
@@ -389,19 +395,21 @@ playwright install chromium
 python init_db.py
 python main.py build-catalog
 
-# 4. 전체 파이프라인 실행
-python main.py agentic            # 수집 → 분석 → 결정 → 리포트
+# 4. 전체 파이프라인 실행 (로컬 1회. 정기 실행은 Airflow — 7장 참고)
+python main.py full               # 수집 → 분석 → 결정 → 리포트
 # 결과: exports/kbeauty_report_{주차}.html
 ```
 
 ### 프로젝트 구조
 ```
 kbeauty_agent_v3/
-├── main.py / scheduler.py          # CLI 진입점 / 정기 실행
+├── main.py                         # CLI 진입점 (단계별 로컬 실행·디버깅)
+├── airflow/                        # Dockerfile · docker-compose · dags/(weekly, catalog)
 ├── agents/                         # orchestrator · collection · analysis · decision
 ├── tools/
-│   ├── collect/                    # tiktok · youtube · oy_global · sephora · voc_collector
+│   ├── collect/                    # tiktok · youtube · oy_global · sephora · voc_collector · brand_registry
 │   ├── analyze/                    # stats · momentum · llm_insight · voc
+│   ├── quality/                    # data_quality (수집 후 결정적 검사)
 │   └── report/                     # html_report · tableau_export
 ├── memory/agent_memory.py          # DB·실행 이력 관리
 └── db/schema.sql                   # 테이블 정의

@@ -24,22 +24,14 @@ import re
 import sys
 from pathlib import Path
 
-import os
 
 # ── 프로젝트 루트를 sys.path에 추가 ──────────────────
 PROJECT_ROOT = Path(__file__).parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # .env UTF-8 직접 파싱 (Windows cp949 환경 대응)
-_env_path = PROJECT_ROOT / ".env"
-if _env_path.exists():
-    with open(_env_path, "r", encoding="utf-8") as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith("#") and "=" in _line:
-                _k, _, _v = _line.partition("=")
-                _v = _v.split(" #")[0].strip().strip('"').strip("'")
-                os.environ[_k.strip()] = _v
+from env_loader import load_env
+load_env()
 
 
 def setup_logging(level: str = "INFO") -> None:
@@ -105,14 +97,14 @@ def main() -> None:
     )
     parser.add_argument(
         "mode",
-        choices = ["full", "collect", "analyze", "decide", "report", "build-catalog", "agentic"],
+        choices = ["full", "collect", "analyze", "decide", "report", "build-catalog"],
         help    = "실행 모드",
     )
     parser.add_argument(
         "--week",
         default = None,
         metavar = "YYYY-WNN",
-        help    = "analyze / decide / agentic 전용: ISO 주차 (예: 2026-W20). 생략 시 달력 기준 현재 주",
+        help    = "analyze / decide 전용: ISO 주차 (예: 2026-W20). 생략 시 달력 기준 현재 주",
     )
     parser.add_argument(
         "--platforms",
@@ -152,8 +144,8 @@ def main() -> None:
     logger = logging.getLogger("main")
     logger.info(f"실행 모드: {args.mode}")
 
-    if args.week is not None and args.mode not in ("analyze", "decide", "agentic"):
-        parser.error("--week 는 analyze / decide / agentic 모드에서만 사용할 수 있습니다.")
+    if args.week is not None and args.mode not in ("analyze", "decide"):
+        parser.error("--week 는 analyze / decide 모드에서만 사용할 수 있습니다.")
 
     analysis_week: str | None = None
     if args.week is not None:
@@ -200,14 +192,6 @@ def main() -> None:
     elif args.mode == "report":
         result = orch.run_report()
         print_summary(result)
-        if result.get("report_path"):
-            print(f"\n  HTML 리포트: {result['report_path']}")
-
-    elif args.mode == "agentic":
-        result = orch.run_full_agentic(week=analysis_week)
-        print("\nAgentic 파이프라인 완료:")
-        for k, v in result.items():
-            print(f"  {k}: {v}")
         if result.get("report_path"):
             print(f"\n  HTML 리포트: {result['report_path']}")
 
