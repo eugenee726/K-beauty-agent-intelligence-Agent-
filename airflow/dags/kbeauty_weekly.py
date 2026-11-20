@@ -2,7 +2,7 @@
 kbeauty_weekly — 주간 파이프라인 (매주 목요일 09:00 KST)
 
 check_status ─> [collect_tiktok | collect_youtube | collect_oy_global]
-             ─> data_quality_check ─> analyze ─> decide ─> publish_report
+             ─> data_quality_check ─> analyze ─> decide ─> validate_insights ─> publish_report
 
 - 이미 끝난 단계는 건너뛴다 (주차별 테이블에 데이터가 있으면 완료로 본다).
 - 수집은 현재 주차일 때만 실행한다. 과거 주차를 backfill 하면 analyze/decide 만 다시 돈다.
@@ -95,6 +95,26 @@ def kbeauty_weekly():
         path = result.get("report_path")
         return str(path) if path else None
 
+    @task(trigger_rule="none_failed", retries=0)
+    def validate_insights(status: dict) -> dict:
+        """
+        LLM 인사이트 검증 ②단계 (규칙 기반, 비용 0). 결과는 fact_insight_validations 에 저장.
+        실패 항목이 있어도 파이프라인은 멈추지 않는다 — 리포트에 'needs_review' 로 표시할 대상.
+        (③단계 LLM 판정은 이 task 에 이어서 추가 예정)
+        """
+        import logging
+        bootstrap()
+        from tools.quality.insight_checks import check_week, save_report
+        report = check_week("db/kbeauty.db", status["week"])
+        save_report("db/kbeauty.db", report)
+        counts = report.counts()
+        log = logging.getLogger("validate_insights")
+        log.info(f"{status['week']} 규칙 검증: {counts} (fail {report.fail_rate:.0%})")
+        for r in report.results:
+            if r.verdict == "fail":
+                log.warning(f"  FAIL [{r.keyword}] {r.check_type} {r.target}: {r.detail}")
+        return {"week": status["week"], **counts, "fail_rate": round(report.fail_rate, 3)}
+
     @task(trigger_rule="none_failed")
     def publish_report(report_path: str | None) -> str | None:
         """REPORT_S3_BUCKET 이 설정돼 있으면 HTML 리포트를 S3 에 올린다."""
@@ -121,7 +141,10 @@ def kbeauty_weekly():
     dq >> analyzed
     decided = decide(status)
     analyzed >> decided
-    publish_report(decided)
+    validated = validate_insights(status)
+    decided >> validated
+    published = publish_report(decided)
+    validated >> published
 
 
 kbeauty_weekly()

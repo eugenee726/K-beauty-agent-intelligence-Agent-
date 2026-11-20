@@ -36,6 +36,30 @@ MAX_CANDIDATES = 150
 REQUEST_GAP_SEC = 30
 
 
+def sample_captions(conn: sqlite3.Connection, keyword: str, week: str,
+                    limit: int = MAX_SNS_SAMPLES) -> list[str]:
+    """
+    LLM 에 넣는 캡션 샘플 (키워드 포함, 조회수 상위).
+    검증 단계(tools/quality/insight_checks.py)도 LLM 이 본 것과 같은 샘플로 대조하려고 공유한다.
+    """
+    kw_plain = keyword.replace("_", " ").lower()
+    low = keyword.lower()
+    rows = conn.execute("""
+        SELECT content_text
+        FROM fact_sns_raw
+        WHERE week = ?
+          AND TRIM(COALESCE(content_text, '')) != ''
+          AND (
+              LOWER(content_text) LIKE ?
+              OR LOWER(content_text) LIKE ?
+              OR LOWER(hashtags)     LIKE ?
+          )
+        ORDER BY view_count DESC
+        LIMIT ?
+    """, (week, f"%{low}%", f"%{kw_plain}%", f"%{low}%", limit)).fetchall()
+    return [r[0] for r in rows]
+
+
 def _load_env_utf8() -> None:
     """Windows cp949 환경에서 .env UTF-8 파싱 보조."""
     root = Path(__file__).parent.parent.parent
@@ -100,22 +124,8 @@ class LLMInsightTool:
 
     def _get_sns_samples(self, keyword: str, week: str) -> list[str]:
         """keyword가 포함된 raw 캡션 샘플 (TikTok+YouTube 통합, 조회수 상위)."""
-        p1, p2, p3 = self._keyword_like_params(keyword)
         with self._conn() as conn:
-            rows = conn.execute("""
-                SELECT content_text
-                FROM fact_sns_raw
-                WHERE week = ?
-                  AND TRIM(COALESCE(content_text, '')) != ''
-                  AND (
-                      LOWER(content_text) LIKE ?
-                      OR LOWER(content_text) LIKE ?
-                      OR LOWER(hashtags)     LIKE ?
-                  )
-                ORDER BY view_count DESC
-                LIMIT ?
-            """, (week, p1, p2, p3, MAX_SNS_SAMPLES)).fetchall()
-        return [r["content_text"] for r in rows]
+            return sample_captions(conn, keyword, week)
 
     def _get_candidate_catalog(self, keyword: str, week: str) -> list[dict]:
         """
