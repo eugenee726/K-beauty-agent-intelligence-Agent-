@@ -18,6 +18,7 @@ VOC 수집은 tools/collect/voc_collector.py 에서 분리 관리.
 분석 단계에서 트렌드 확정 제품에 대해서만 on-demand 수집.
 """
 
+import os
 import re
 import asyncio
 import sqlite3
@@ -795,7 +796,8 @@ class OYGlobalTool:
             logger.info(f"  상세 페이지 방문 대상: {len(to_visit)}개")
 
             # ── Phase 2: Page Pool — 고정 창 N개만 생성 후 재사용 ──
-            POOL_SIZE = 5  # 동시 열려있는 창 수 (고정)
+            # 동시 창 수. 2 vCPU 서버에서 5개는 과부하(load 20, 스왑)였으므로 기본 3, .env 로 조정
+            POOL_SIZE = int(os.getenv("OY_CATALOG_POOL_SIZE", "3"))
             pool_ctxs  = []
             pool_pages = []
             for _ in range(POOL_SIZE):
@@ -841,8 +843,19 @@ class OYGlobalTool:
                     "oy_prdtno":       rp["prdtno"],
                 }
 
-            detail_tasks = [fetch_detail(rp) for rp in to_visit]
-            detail_results = await asyncio.gather(*detail_tasks, return_exceptions=True)
+            # 배치 단위로 방문 → 즉시 DB 저장. 중간에 끊겨도(타임아웃·재시도) 저장분은 남고,
+            # 재실행 시 카테고리가 채워진 제품은 캐시 스킵되어 이어서 진행된다.
+            BATCH = 50
+            inserted = updated = 0
+            for start in range(0, len(to_visit), BATCH):
+                chunk = to_visit[start:start + BATCH]
+                results = await asyncio.gather(*(fetch_detail(rp) for rp in chunk),
+                                               return_exceptions=True)
+                ins, upd = self._save_catalog_products([r for r in results if isinstance(r, dict)])
+                inserted += ins
+                updated += upd
+                logger.info(f"  상세 진행 {min(start + BATCH, len(to_visit))}/{len(to_visit)} "
+                            f"(신규 {inserted} / 업데이트 {updated})")
 
             # 풀 정리
             for ctx in pool_ctxs:
@@ -850,13 +863,17 @@ class OYGlobalTool:
 
             await browser.close()
 
-        all_products = [r for r in detail_results if isinstance(r, dict)]
-        logger.info(f"Phase 2 완료: {len(all_products)}개 상세 수집")
+        logger.info(f"Phase 2 완료: {len(to_visit)}개 상세 방문")
 
-        # ── DB 저장 ──
+        total = len(all_raw)
+        logger.info(f"카탈로그 구축 완료: 전체 {total}개 / 신규 {inserted}개 / 업데이트 {updated}개 / 스킵 {skip_count}개")
+        return {"total": total, "inserted": inserted + updated, "skipped": skip_count}
+
+    def _save_catalog_products(self, products: list[dict]) -> tuple[int, int]:
+        """상세 수집 결과를 dim_product 에 저장 (oy_prdtno 기준 신규 INSERT / 기존 UPDATE)."""
         inserted = updated = 0
         with self._conn() as conn:
-            for p in all_products:
+            for p in products:
                 try:
                     prdtno = p.get("oy_prdtno", "")
 
@@ -901,9 +918,7 @@ class OYGlobalTool:
                 except Exception as e:
                     logger.debug(f"카탈로그 등록 실패: {e}")
 
-        total = len(all_raw)
-        logger.info(f"카탈로그 구축 완료: 전체 {total}개 / 신규+업데이트 {inserted}개 / 스킵 {skip_count}개")
-        return {"total": total, "inserted": inserted, "skipped": skip_count}
+        return inserted, updated
 
     def build_catalog(self) -> dict:
         """AP 전체 제품 카탈로그 구축 (일회성 or 월 1회 실행)."""
