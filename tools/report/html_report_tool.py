@@ -12,6 +12,7 @@ K-beauty Intelligence HTML 리포트 생성 툴.
 """
 
 import json
+import re
 import sqlite3
 import logging
 from datetime import datetime, timezone
@@ -720,6 +721,77 @@ class HTMLReportTool:
 
         return podium_html + list_html + criteria_html
 
+    def _overview(self, week: str) -> dict:
+        """첫 화면: KPI 4개, 이번 주 3줄 요약, 신뢰 표시줄, 검증 실패(검토 필요) 목록."""
+        with self._conn() as conn:
+            q = lambda sql: conn.execute(sql, (week,)).fetchall()
+            trends = q("""SELECT keyword, z_score, trend_shape, consumer_need
+                          FROM fact_trend_insights WHERE week=? ORDER BY z_score DESC""")
+            posts = q("SELECT COUNT(*) FROM fact_sns_raw WHERE week=?")[0][0]
+            ranked = q("SELECT COUNT(DISTINCT product_id) FROM fact_retail_rankings WHERE week=?")[0][0]
+            brands = q("""SELECT COUNT(DISTINCT p.brand_id) FROM fact_retail_rankings r
+                          JOIN dim_product p ON p.product_id = r.product_id WHERE r.week=?""")[0][0]
+            try:
+                vrows = q("""SELECT checker, verdict, COUNT(*) n FROM fact_insight_validations
+                             WHERE week=? GROUP BY checker, verdict""")
+                fails = q("""SELECT keyword, check_type, target, detail, checker
+                             FROM fact_insight_validations WHERE week=? AND verdict='fail'
+                             ORDER BY keyword, checker""")
+            except sqlite3.OperationalError:   # 검증 테이블이 아직 없는 DB
+                vrows, fails = [], []
+
+        # 검증 통과율 (checker 별)
+        by_checker: dict = {}
+        for r in vrows:
+            by_checker.setdefault(r["checker"], {"pass": 0, "warn": 0, "fail": 0})[r["verdict"]] = r["n"]
+        def rate(c):
+            tot = sum(c.values())
+            return (c["pass"] / tot * 100) if tot else None
+        rule = by_checker.pop("rule", None)
+        llm_name, llm = (next(iter(by_checker.items())) if by_checker else (None, None))
+        all_counts = {k: (rule or {}).get(k, 0) + (llm or {}).get(k, 0) for k in ("pass", "warn", "fail")}
+        total_rate = rate(all_counts)
+
+        def kpi(val, label, sub=""):
+            return (f'<div class="kpi"><div class="kpi-val">{val}</div>'
+                    f'<div class="kpi-lbl">{label}</div><div class="kpi-sub">{sub}</div></div>')
+        kpis = "".join([
+            kpi(len(trends), "급상승 키워드", "z-score · 모멘텀 기준"),
+            kpi(f"{posts:,}", "분석한 SNS 게시물", "TikTok · YouTube"),
+            kpi(f"{ranked:,}", "랭킹 제품", f"랭킹 등장 브랜드 {brands}개 · OY Global"),
+            kpi(f"{total_rate:.0f}%" if total_rate is not None else "–", "인사이트 검증 통과율",
+                f"검토 필요 {all_counts['fail']}건"),
+        ])
+
+        lines = []
+        for t in trends[:3]:
+            shape = SHAPE_META.get(t["trend_shape"], {}).get("label", "")
+            need = (t["consumer_need"] or "").strip()
+            need = re.split(r"(?<=[.다])\s", need, maxsplit=1)[0]   # 요약은 첫 문장만
+            lines.append(f'<li><strong>{t["keyword"].replace("_", " ")}</strong>'
+                         f'<span class="pill">z {t["z_score"]:.1f}{" · " + str(shape) if shape else ""}</span>'
+                         f'{" — " + need if need else ""}</li>')
+        summary = "".join(lines) or "<li>이번 주 급상승 키워드 없음</li>"
+
+        def pct(c):
+            r = rate(c) if c else None
+            return f"{r:.0f}%" if r is not None else "–"
+        trust = (f'<span>출처 TikTok · YouTube · OY Global · Sephora</span>'
+                 f'<span>검증: 규칙 {pct(rule)} · LLM 판정({llm_name or "미실행"}) {pct(llm)} 통과</span>')
+
+        if fails:
+            items = "".join(
+                f'<tr><td>{f["keyword"]}</td><td>{f["check_type"]}</td><td>{f["target"]}</td>'
+                f'<td>{f["detail"]}</td><td class="muted">{"규칙" if f["checker"] == "rule" else "LLM"}</td></tr>'
+                for f in fails)
+            review = (f'<details class="card review"><summary>검토 필요 {len(fails)}건 '
+                      f'<span class="muted">— 근거와 맞지 않는 LLM 출력 (자동 검증)</span></summary>'
+                      f'<table><thead><tr><th>키워드</th><th>검사</th><th>대상</th><th>사유</th><th>판정</th></tr></thead>'
+                      f'<tbody>{items}</tbody></table></details>')
+        else:
+            review = ""
+        return {"kpis": kpis, "summary": summary, "trust": trust, "review": review}
+
     @staticmethod
     def _week_label(week: str) -> str:
         """'2026-W24' → '2026년 6월 2주차 (6/8~6/14)' 형식의 사람이 읽을 라벨."""
@@ -753,6 +825,7 @@ class HTMLReportTool:
         product_html, product_data = self._product_tab(week)
         chart_data["scatter"] = product_data.get("scatter", [])
         inbound_html             = self._inbound_tab(week)
+        ov                       = self._overview(week)
 
         # 요약 통계
         with self._conn() as conn:
@@ -768,23 +841,42 @@ class HTMLReportTool:
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>K-beauty Intelligence Report — {week}</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css"/>
 <style>
   :root {{
-    --primary: #e91e8c;
-    --secondary: #6c4ab6;
-    --bg: #f7f7fb;
+    --primary: #d6336c;
+    --secondary: #343a40;
+    --bg: #f5f6f8;
     --card: #ffffff;
     --text: #1a1a2e;
     --muted: #666;
     --border: #e0e0e0;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  body {{ font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           background: var(--bg); color: var(--text); }}
-  header {{ background: linear-gradient(135deg, var(--primary), var(--secondary));
-            color: white; padding: 2rem 2rem 1.5rem; }}
-  header h1 {{ font-size: 1.7rem; font-weight: 700; }}
-  header p  {{ opacity: 0.85; margin-top: 0.4rem; font-size: 0.92rem; }}
+  header {{ background: var(--card); border-top: 4px solid var(--primary);
+            border-bottom: 1px solid var(--border); padding: 1.5rem 1.5rem 1.2rem; }}
+  .wrap {{ max-width: 1280px; margin: 0 auto; }}
+  header h1 {{ font-size: 1.5rem; font-weight: 700; letter-spacing: -0.01em; }}
+  header p  {{ color: var(--muted); margin-top: 0.3rem; font-size: 0.875rem; }}
+  .trust {{ display: flex; gap: 1.2rem; flex-wrap: wrap; margin-top: 0.6rem;
+            font-size: 0.75rem; color: var(--muted); }}
+  .trust span::before {{ content: "●"; color: var(--primary); margin-right: 0.35rem; font-size: 0.6rem; }}
+  .landing {{ max-width: 1280px; margin: 0 auto; padding: 1.2rem 1.5rem 0; }}
+  .kpis {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.8rem; }}
+  .kpi {{ background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.1rem; }}
+  .kpi-val {{ font-size: 1.5rem; font-weight: 700; }}
+  .kpi-lbl {{ font-size: 0.875rem; margin-top: 0.2rem; }}
+  .kpi-sub {{ font-size: 0.75rem; color: var(--muted); margin-top: 0.15rem; }}
+  .summary {{ margin-top: 0.8rem; }}
+  .summary h2 {{ font-size: 0.875rem; color: var(--muted); font-weight: 600; margin-bottom: 0.5rem; }}
+  .summary ol {{ padding-left: 1.2rem; font-size: 0.875rem; line-height: 1.8; }}
+  .pill {{ display: inline-block; margin: 0 0.4rem; padding: 0 0.5rem; border-radius: 999px;
+           background: #fbe9f0; color: var(--primary); font-size: 0.75rem; }}
+  .review summary {{ cursor: pointer; font-weight: 600; font-size: 0.875rem; }}
+  .review table {{ margin-top: 0.8rem; }}
+  .muted {{ color: var(--muted); font-weight: 400; }}
   .header-stats {{ display: flex; gap: 2rem; margin-top: 1.2rem; flex-wrap: wrap; }}
   .hstat {{ text-align: center; }}
   .hstat .val {{ font-size: 1.6rem; font-weight: 700; }}
@@ -816,6 +908,7 @@ class HTMLReportTool:
   footer {{ text-align: center; padding: 2rem; color: var(--muted); font-size: 0.82rem;
             border-top: 1px solid var(--border); margin-top: 2rem; }}
   @media (max-width: 768px) {{
+    .kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
     .header-stats {{ gap: 1rem; }}
     .tab {{ padding: 0.8rem 0.8rem; font-size: 0.82rem; }}
   }}
@@ -823,21 +916,17 @@ class HTMLReportTool:
 </head>
 <body>
 
-<header>
-  <h1> K-beauty Intelligence Report</h1>
-  <p>US K-beauty Market<br>
-  <strong>{week}</strong> · {week_label} · Generated {ts}</p>
-  <div style="margin-top:0.7rem;font-size:0.8rem;opacity:0.9;display:flex;gap:1.5rem;flex-wrap:wrap">
-    <span><strong>SNS</strong> : TikTok / YouTube</span>
-    <span><strong>Retail</strong> : OY Global / Sephora USA</span>
-  </div>
-  <div class="header-stats">
-    <div class="hstat"><div class="val">{trend_cnt}</div><div class="lbl">트렌드 인사이트</div></div>
-    <div class="hstat"><div class="val">{product_cnt}</div><div class="lbl">제품 분석</div></div>
-    <div class="hstat"><div class="val">{push_cnt}</div><div class="lbl">PUSH NOW 제품</div></div>
-    <div class="hstat"><div class="val">{inbound_cnt}</div><div class="lbl">방한 추천 제품</div></div>
-  </div>
-</header>
+<header><div class="wrap">
+  <h1>K-beauty Intelligence Report</h1>
+  <p>미국 K-뷰티 시장 주간 트렌드 · <strong>{week}</strong> · {week_label} · 생성 {ts}</p>
+  <div class="trust">{ov["trust"]}</div>
+</div></header>
+
+<section class="landing">
+  <div class="kpis">{ov["kpis"]}</div>
+  <div class="card summary"><h2>이번 주 요약</h2><ol>{ov["summary"]}</ol></div>
+  {ov["review"]}
+</section>
 
 <div class="tabs">
   <div class="tab active" onclick="switchTab(0)"> 트렌드 인사이트</div>
