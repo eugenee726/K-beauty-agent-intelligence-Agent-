@@ -98,9 +98,9 @@ def kbeauty_weekly():
     @task(trigger_rule="none_failed", retries=0)
     def validate_insights(status: dict) -> dict:
         """
-        LLM 인사이트 검증 ②단계 (규칙 기반, 비용 0). 결과는 fact_insight_validations 에 저장.
+        LLM 인사이트 검증: ②단계 규칙 검사(비용 0) → ③단계 LLM 판정(VALIDATOR_MODEL, 기본 Opus).
+        결과는 모두 fact_insight_validations 에 저장 (checker 로 구분).
         실패 항목이 있어도 파이프라인은 멈추지 않는다 — 리포트에 'needs_review' 로 표시할 대상.
-        (③단계 LLM 판정은 이 task 에 이어서 추가 예정)
         """
         import logging
         bootstrap()
@@ -113,7 +113,23 @@ def kbeauty_weekly():
         for r in report.results:
             if r.verdict == "fail":
                 log.warning(f"  FAIL [{r.keyword}] {r.check_type} {r.target}: {r.detail}")
-        return {"week": status["week"], **counts, "fail_rate": round(report.fail_rate, 3)}
+        out = {"week": status["week"], "rule": counts, "rule_fail_rate": round(report.fail_rate, 3)}
+
+        # ③ LLM 판정 (생성 모델과 다른 모델). 오류가 나도 파이프라인은 계속 진행한다.
+        try:
+            from agents.validation_agent import ValidationAgent
+            judge = ValidationAgent("db/kbeauty.db")
+            llm_report = judge.validate_week(status["week"])
+            judge.save(llm_report)
+            for r in llm_report.results:
+                if r.verdict == "fail":
+                    log.warning(f"  LLM FAIL [{r.keyword}] {r.check_type} {r.target}: {r.detail}")
+            out.update(llm=llm_report.counts(), llm_fail_rate=round(llm_report.fail_rate, 3),
+                       llm_model=judge.model, llm_tokens=judge.usage)
+        except Exception as e:
+            log.error(f"LLM 판정 단계 실패 (파이프라인은 계속): {e}")
+            out["llm_error"] = str(e)[:300]
+        return out
 
     @task(trigger_rule="none_failed")
     def publish_report(report_path: str | None) -> str | None:
