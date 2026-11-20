@@ -68,8 +68,10 @@ services:
 
   airflow-init:
     <<: *airflow-common
-    entrypoint: /bin/bash
+    # entrypoint 를 덮어쓰지 않는다: 공식 /entrypoint 가 임의 UID 를 /etc/passwd 에 등록해 준다
+    # (덮어쓰면 'getpwuid(): uid not found' 로 실패). command 가 bash 로 시작하면 그대로 실행된다.
     command:
+      - bash
       - -c
       - |
         airflow db migrate &&
