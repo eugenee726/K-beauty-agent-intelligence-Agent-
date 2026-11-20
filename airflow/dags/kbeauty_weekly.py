@@ -129,6 +129,14 @@ def kbeauty_weekly():
         except Exception as e:
             log.error(f"LLM 판정 단계 실패 (파이프라인은 계속): {e}")
             out["llm_error"] = str(e)[:300]
+
+        # decide 단계에서 만든 리포트에는 이번 주 검증 결과가 없으므로 다시 생성 (신뢰 표시줄 반영)
+        try:
+            from pathlib import Path
+            from tools.report.html_report_tool import HTMLReportTool
+            HTMLReportTool("db/kbeauty.db", str(Path("db/kbeauty.db").resolve().parent.parent / "exports")).generate(status["week"])
+        except Exception as e:
+            log.error(f"검증 반영 리포트 재생성 실패: {e}")
         return out
 
     @task(trigger_rule="none_failed")
