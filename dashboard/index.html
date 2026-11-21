@@ -14,13 +14,13 @@
   <aside class="side">
     <div class="brand">K-beauty<br><span>Trend Radar</span></div>
     <nav id="nav">
-      <a data-page="overview">개요</a>
-      <a data-page="trends">트렌드</a>
-      <a data-page="brands">브랜드</a>
-      <a data-page="products">제품·VOC</a>
-      <a data-page="inbound">방한 추천</a>
-      <a data-page="quality">검증·품질</a>
-      <a data-page="method">방법론</a>
+      <a data-page="overview" data-track="tab_view">개요</a>
+      <a data-page="trends" data-track="tab_view">트렌드</a>
+      <a data-page="brands" data-track="tab_view">브랜드</a>
+      <a data-page="products" data-track="tab_view">제품·VOC</a>
+      <a data-page="inbound" data-track="tab_view">방한 추천</a>
+      <a data-page="quality" data-track="tab_view">검증·품질</a>
+      <a data-page="method" data-track="tab_view">방법론</a>
     </nav>
     <div class="side-foot" id="sideFoot"></div>
   </aside>
@@ -32,10 +32,10 @@
       </div>
       <div class="controls">
         <div class="seg" id="modeSeg">
-          <button data-mode="week">주간</button>
-          <button data-mode="month">월간</button>
+          <button data-mode="week" data-track="period_change">주간</button>
+          <button data-mode="month" data-track="period_change">월간</button>
         </div>
-        <select id="periodSelect" aria-label="기간 선택"></select>
+        <select id="periodSelect" aria-label="기간 선택" data-track="period_change"></select>
         <span class="badge" id="trustBadge"></span>
       </div>
     </header>
