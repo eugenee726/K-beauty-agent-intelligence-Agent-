@@ -32,6 +32,15 @@
   const WEEKS = D.weeks;
   const WEEK = Object.fromEntries(WEEKS.map(w => [w.week, w]));
   const MONTHS = [...new Set(WEEKS.map(w => w.month))];
+  const PAGE_DESC = {
+    overview: '이번 기간 핵심 판단, 트렌드 수, 검토 필요 건수를 한눈에 확인',
+    trends: '뜨는 니즈 키워드와 그 대화를 어떤 브랜드가 차지했는지(우세·각축·공백) 확인',
+    brands: '트렌드별 브랜드 언급 점유와 Olive Young 랭킹 속 브랜드·회사 존재감 비교',
+    products: '리뷰 반응과 별점 추세로 제품별 확대·개선·관찰 전략 확인',
+    inbound: '방한 관광객에게 추천할 제품 순위와 그 근거(SNS·리뷰·랭킹) 확인',
+    quality: '수집량과 AI 해석의 자동 검증 결과, 사람이 검토할 오류 목록 확인',
+    method: '수집부터 판정·검증까지 쓰는 기준과 계산식 확인',
+  };
   const PAGES = { overview: '개요', trends: '트렌드', brands: '브랜드', products: '제품 전략', inbound: '방한 추천', quality: '검증·품질', method: '방법론' };
 
   // ── 표기 ──
@@ -693,6 +702,7 @@
     const ws = periodWeeks(state.mode, state.key), last = ws[ws.length - 1];
     const partial = D.generated < `${last.end} 23:59`;
     document.getElementById('pageTitle').textContent = PAGES[state.page];
+    document.getElementById('pageDesc').textContent = PAGE_DESC[state.page] || '';
     document.getElementById('periodLabel').textContent = (state.mode === 'week' ? last.label
       : `${monthLabel(state.key)} · 데이터 주차 ${ws.map(w => w.week.slice(5)).join(', ')}`) + (partial ? ' (집계 중)' : '');
     const v = valid(ws);

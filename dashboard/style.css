@@ -257,3 +257,5 @@ details.card summary { cursor: pointer; }
 .q3 { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: auto auto; gap: 6px; border-left: 2px solid var(--ink-2); border-bottom: 2px solid var(--ink-2); padding: 0 0 6px 6px; }
 .q3 .fix { grid-row: 1 / 3; }
 .q3 .mon { grid-column: 2 / 4; }
+
+.page-desc { color: var(--ink-2); font-size: 14px; margin-top: 4px; }
