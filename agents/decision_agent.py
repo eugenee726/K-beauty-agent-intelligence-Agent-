@@ -344,6 +344,11 @@ class DecisionAgent:
 
     def _trigger_voc(self, targets: list[dict]) -> int:
         """이미 수집된 (platform, product) 제외 후 VOC 수집 + GPT 감성 분석."""
+        # 과거 주차 재분석(backfill) 때 지금 리뷰를 수집해 과거 주차에 붙이지 않도록 막는다.
+        # 그 주에 이미 저장된 VOC 만 쓰고, 없으면 기존 폴백(직전 주차 값)이 적용된다.
+        if self.week != self.memory.get_current_week():
+            logger.info(f"VOC 트리거: {self.week} 는 과거 주차 → 수집 생략 (저장된 VOC 만 사용)")
+            return 0
         from tools.collect.voc_collector import VocCollector
         from tools.analyze.voc_tool      import VOCTool
 
