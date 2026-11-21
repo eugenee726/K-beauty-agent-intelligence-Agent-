@@ -305,10 +305,10 @@
     const oppKey = x => x.tr.state === 'hold' ? 'hold' : x.t.opp;
     const counts = {}; items.forEach(x => counts[oppKey(x)] = (counts[oppKey(x)] || 0) + 1);
     const types = w.legacy ? Object.keys(counts) : ['leader', 'contested', 'white_space', 'hold'];
-    const desc = { leader: '한 브랜드가 이 대화의 절반 이상을 차지합니다. 그 브랜드의 메시지와 제품을 기준으로 삼고, 우리가 다르게 말할 지점을 찾을 때 봅니다.',
-                   contested: '여러 브랜드가 대화를 나눠 갖고 있고 대표 브랜드는 아직 없습니다. 먼저 이 니즈의 대표 제품으로 자리 잡으면 유리합니다.',
-                   white_space: '소비자 관심은 있는데 K-브랜드 이야기가 없습니다. 맞는 제품이 있으면 알리는 것부터, 없으면 제품 기획을 검토합니다.',
-                   hold: `브랜드 언급이 ${RULES.MIN_MENTIONS.v}건 미만이라 누가 이 대화를 차지했는지 아직 말할 수 없습니다. 다음 주 수집 후 다시 봅니다.` };
+    const desc = { leader: '한 브랜드의 대화 과반 점유. 1위 브랜드 메시지·제품 기준의 차별 포인트 탐색',
+                   contested: '대표 브랜드 없이 여러 브랜드가 분점. 이 니즈의 대표 제품 선점 기회',
+                   white_space: '관심은 있으나 K-브랜드 언급 없음. 맞는 제품은 홍보, 없으면 제품 기획 검토',
+                   hold: `브랜드 언급 ${RULES.MIN_MENTIONS.v}건 미만으로 점유 판단 불가. 다음 주 수집 후 재확인` };
     const label = o => o === 'hold' ? '판단 보류' : (META.opp[o] || {}).label || o;
     const norm = t => String(t.action).split(t.kw).join('{kw}');
     const freq = {}; w.trends.forEach(t => freq[norm(t)] = (freq[norm(t)] || 0) + 1);
@@ -427,10 +427,10 @@
     const ws = periodWeeks(mode, k), w = ws[ws.length - 1], ps = w.products;
     if (!ps.length) return [snapNote(mode, ws) + empty('제품 인사이트 없음'), null];
     const counts = {}; ps.forEach(p => counts[p.quad] = (counts[p.quad] || 0) + 1);
-    const qdesc = { PUSH_NOW: '리뷰 반응(또는 랭킹)이 좋고 별점도 오르는 중입니다. 지금 광고·프로모션을 늘리기 좋은 제품입니다.',
-                    FIX_AND_PUSH: '별점이 내려가거나 불만 리뷰가 늘고 있습니다. 불만 포인트를 먼저 고치거나 설명한 뒤 밀어야 합니다.',
-                    HOLD: '반응은 좋지만 변화가 없습니다. 지금 수준을 유지하며 지켜봅니다.',
-                    MONITOR: '리뷰 긍정 비율이 기준(65%)에 못 미치지만 나빠지는 신호도 없습니다. 지켜봅니다.' };
+    const qdesc = { PUSH_NOW: '리뷰 반응(또는 랭킹) 양호 + 별점 상승. 광고·프로모션 확대 적기',
+                    FIX_AND_PUSH: '별점 하락 또는 불만 리뷰 증가. 불만 포인트 개선 후 확대',
+                    HOLD: '반응은 좋으나 변화 없음. 현 수준 유지·관찰',
+                    MONITOR: '긍정 비율 65% 미만, 하락 신호 없음. 관찰 대상' };
     const match = p => (quadFilter === 'ALL' || p.quad === quadFilter) && (!prodSearch || `${p.name} ${p.brand}`.toLowerCase().includes(prodSearch));
     const trend = v => v === null || v === undefined ? '<span class="muted">—</span>' : v > 0 ? `▲ ${v.toFixed(2)}` : v < 0 ? `▼ ${v.toFixed(2)}` : '±0';
     const groups = QUAD_ORDER.map(q => { const rows = ps.filter(p => p.quad === q && match(p));
@@ -559,30 +559,121 @@
   }
 
   // ── 페이지: 방법론 ──
-  function pageMethod() {
-    const rules = Object.entries(RULES).map(([k, r]) => `<tr><td><code>${k}</code></td><td>${esc(r.label)}</td><td class="num"><b>${r.v}</b></td><td>${esc(r.desc)}</td></tr>`).join('');
-    return [`<div class="method">
-      ${card('데이터', '', `<p>TikTok 해시태그 영상(Apify, 미국 프록시 + 영어 캡션), YouTube 키워드 영상(Data API, regionCode=US), Olive Young Global 랭킹·리뷰(Playwright), Sephora US 리뷰(Bazaarvoice). 매주 목요일 Airflow가 수집합니다.</p>`)}
-      ${card('수집과 표본', '', `<p><b>탐지용(1차)</b> — 매주 같은 검색어·해시태그로 모읍니다. YouTube는 하루 단위로 매일 수집(2026-W48부터, 무료 할당 안), TikTok은 일반 해시태그 6개 × 60건 + 브랜드 해시태그 28개 × 5건. 한 주는 목요일 실행 직전 7일(목~수)입니다.</p>
-        <p><b>해석용(트렌드 심층 수집)</b> — 트렌드가 정해진 뒤 그 키워드로 YouTube 약 100건, TikTok 28건을 더 모아 LLM 캡션 샘플과 브랜드 언급 집계에 씁니다. <b>트렌드 선정·z-score·게시물 수에는 쓰지 않습니다</b>(키워드로 검색한 결과를 탐지에 넣으면 스스로 뜨는 것처럼 보이는 순환이 생기기 때문). 검색 순위 상위라 인기·협찬 영상 쪽으로 치우칠 수 있습니다.</p>
-        <p>2026-11-21에 탐지 지표를 총량에서 비중으로 바꾸고 모든 과거 주차를 다시 분석했습니다. 이전 방식에서는 수집량이 늘어난 W19 이후 주차에 키워드 30~40개가 한꺼번에 '급등'으로 잡혔습니다.</p>`)}
-      ${card('트렌드 판정 (파이프라인)', '', `<p><code>engagement</code> TikTok 조회×0.3 + 좋아요×1.0 + 댓글×2.0 · YouTube 조회×0.2 + 좋아요×1.5 + 댓글×3.0</p>
-        <p><code>z-score</code> 키워드 <b>게시물 비중</b>(그 주 전체 게시물 대비)의 z. (이번 주 − 과거 주차 평균) ÷ 표준편차, 과거 3개 데이터 주차 이상일 때 계산. 총량 대신 비중을 써서 수집량이 바뀌어도 비교되고, 게시물 수 기반이라 바이럴 영상 하나에 흔들리지 않습니다. engagement 비중 z는 카드 상세에 참고로 표시합니다.</p>
-        <p><code>모멘텀</code> 키워드 <b>engagement 비중</b>의 이번 주 ÷ 데이터가 있는 3번째 전 주차 (카드의 '비교 기준'이 이 주차)</p>
-        <p>후보 = 순간 급등(z ≥ 2.0) ∪ 지속 상승(3개 데이터 주차 연속 상승 + 모멘텀 ≥ 1.5) → 광의어·브랜드명 제외 → 게시물 ≥ 5, 캡션 ≥ 3 → 최대 10개</p>`)}
-      ${card('대화 점유 (기회 유형)', '', `<p>트렌드 키워드가 들어간 캡션 전체(탐지용 + 심층 수집)에서 코드로 센 등록 브랜드 언급 기준(캡션당 1회, 판매처·사람 이름은 등록 브랜드가 아니라 자연히 빠짐). LLM이 센 브랜드 수는 쓰지 않습니다. <b>선점</b> 1위 브랜드 ≥ 50% 그리고 ≥ 3건 · <b>각축</b> 과반 브랜드 없음 · <b>공백</b> K-브랜드 언급 없음(맞는 제품이 있으면 소통 공백, 없으면 제품 공백)</p>`)}
-      ${card('화면 표시 규칙', '파이프라인 판정은 바꾸지 않고, 대시보드가 data.js 값으로만 계산하는 표시 규칙입니다. 아래 값은 dashboard/app.js의 RULES 상수를 그대로 읽어 표시합니다.',
-        `<div class="tbl-wrap"><table><thead><tr><th>상수</th><th>표시</th><th class="num">기준값</th><th>설명</th></tr></thead><tbody>${rules}</tbody></table></div>
-        <p><b>신뢰 배지</b> 판단 보류(회색) = MIN_MENTIONS 미달 · 관찰 중(주황) = 표본 부족·이력 짧음·급등 의심 중 하나 이상 · 판단 가능(초록) = 경고 없음</p>
-        <p><b>트렌드 모양 표시</b> ⇈ 급등+지속 = 지속 상승이면서 z ≥ ${RULES.SURGE_Z.v} · ↑ 급등 · ↗ 지속 · ＋ 신규 · → 정체. z < ${RULES.SURGE_Z.v}이면 '완만한 상승'으로 집계(z가 음수여도 지속 상승 기준으로 선정된 경우)</p>
-        <p><b>협찬 근거</b> 인용문에 ${esc('#ad, #sponsored, partner, #광고, [광고], 쿠팡 파트너스, supported by, gifted, 할인 코드·promo code')} 패턴이 있으면 '협찬' 태그(삭제하지 않음). 근거가 모두 협찬이면 '오가닉 근거 없음'</p>
-        <p><b>판단 근거 한 줄</b> 같은 주차에서 제안 문장이 키워드만 다르고 2개 이상 같으면 표시. 선행 = 먼저 반응이 커진 플랫폼 · TikTok·YouTube 동시 = 두 플랫폼 모두에서 언급 · 1위 브랜드 점유 = K-브랜드 언급 중 1위 비중 · 협찬 근거 = 협찬 인용 수 / 전체 인용 수</p>
-        <p><b>표본과 신뢰구간</b> 점유 막대는 결정적 집계(키워드가 들어간 이번 주 캡션 전체에서 등록 브랜드 이름·별칭을 단어 경계로 셈, 캡션당 1회)를 씁니다. 1위 점유 옆 범위는 Wilson 95% 구간입니다. 일반 단어와 겹쳐 제외한 브랜드명: ${esc((D.brand_stopwords || []).join(', '))}. 파이프라인의 기회 유형 판정은 LLM 샘플 기준 그대로이며, 카드 상세에서 두 집계를 비교할 수 있습니다.</p>
-        <p><b>레이더 구분선</b> 가로 ${RULES.SUSTAIN_MOMENTUM.v}배(지속 기준) · 세로 z ${RULES.SURGE_Z.v}(급등 기준). 오른쪽 위 = 강하게 뜨는 중, 오른쪽 아래 = 꾸준히 오르는 중, 왼쪽 위 = 한 주 반짝</p>`)}
-      ${card('제품 전략 (VOC 4분면)', '', `<p>긍정 = VOC 긍정률 ≥ 0.65 또는 리테일 점수 ≥ 0.7 · 상승 = 별점 상승 · 불만 = 별점 하락 또는 부정 ≥ 0.35. <b>PUSH NOW</b> 긍정 + 상승 + 불만 없음 · <b>FIX & PUSH</b> 불만 · <b>HOLD</b> 긍정이나 정체 · <b>MONITOR</b> 그 외. 리뷰 유입(누적 증가분)은 거의 항상 양수라 분류에 쓰지 않고 표시만 합니다.</p>`)}
-      ${card('방한 추천', '', `<p>Pick Score = 0.35 × SNS 트렌드 강도 + 0.35 × VOC 긍정도 + 0.30 × 리테일 인기. 리테일 점수 = max(0, 1 − (순위 − 1) ÷ 100)</p>`)}
-      ${card('월간 보기', '', `<p>새 판정 없이 주차 결과를 묶습니다. 게시물·언급은 합계, 트렌드는 합집합(배지는 마지막 등장 주차 기준), 검증은 월 전체 통과율, 제품·방한 추천은 월의 마지막 데이터 주차 기준입니다.</p>`)}
-    </div>`, null];
+  // 텍스트 나열 대신 흐름도·도식·실제 데이터 차트로 기준을 보여 준다. 수치 기준은 RULES 와 파이프라인 상수 그대로.
+  function pageMethod(mode, k) {
+    const ws = periodWeeks(mode, k), w = ws[ws.length - 1];
+    const rules = Object.entries(RULES).map(([key, r]) => `<tr><td><code>${key}</code></td><td>${esc(r.label)}</td><td class="num"><b>${r.v}</b></td><td>${esc(r.desc)}</td></tr>`).join('');
+    const flow = [['수집', 'TikTok · YouTube · OY · Sephora'], ['품질 검사', '건수·빈 본문 미달 시 중단'], ['탐지', '게시물 비중 z · 모멘텀'],
+                  ['심층 수집', '트렌드 키워드만 추가 검색'], ['LLM 해석', '니즈 · 제품 연결 (Sonnet)'], ['의사결정', '대화 점유 · 제품 전략 · 방한 추천'],
+                  ['검증', '규칙 + 다른 모델 (Opus)'], ['대시보드', '주·월 단위 조회']];
+    const detN = sum(Object.values(w.platforms)), deepN = sum(w.trends.map(t => (t.det && t.det.deep) || 0));
+    const shares = w.trends.map(t => { const s = shareOf(w, t);
+      return { kw: kwName(t.kw), top: s.rows[0] ? brandName(s.rows[0][0]) : '—', v: s.total && s.rows[0] ? s.rows[0][1] / s.total : 0, n: s.total }; })
+      .sort((a, b) => b.v - a.v);
+    const v = valid([w]);
+    const mini = (label, cls) => `<span class="tag ${cls}">${label}</span>`;
+    const quad = cells => `<div class="q2">${cells.map(([t, d, cls]) => `<div class="q2c ${cls || ''}"><b>${t}</b><span>${d}</span></div>`).join('')}</div>`;
+    const html = `<div class="method">
+      ${card('전체 흐름', `매주 목요일 Airflow 실행 · YouTube는 매일 수집 · 기준 주차 ${esc(w.week)}`,
+        `<div class="flow">${flow.map(([t, d], i) => `<div class="fstep"><div class="fn">${i + 1}</div><b>${t}</b><span>${d}</span></div>`).join('')}</div>`)}
+
+      <div class="grid2">
+        ${card('표본: 탐지용과 해석용 분리', '키워드로 검색한 결과를 탐지에 섞으면 스스로 뜨는 것처럼 보이는 순환 발생, 그래서 분리',
+          `<div class="split">
+             <div class="sbox"><div class="sh">탐지용</div><div class="sn">${fmt(detN)}<small>건</small></div>
+               <ul><li>매주 같은 검색어·해시태그</li><li>YouTube 매일 · TikTok 주 500건</li><li>트렌드 선정 · z · 게시물 수에 사용</li></ul></div>
+             <div class="sbox alt"><div class="sh">해석용 (심층 수집)</div><div class="sn">${fmt(deepN)}<small>건</small></div>
+               <ul><li>트렌드 키워드로 추가 검색</li><li>키워드당 YouTube ~100 · TikTok 28</li><li>LLM 캡션 샘플 · 브랜드 집계에만 사용</li></ul></div>
+           </div>`)}
+        ${card('탐지 지표: 총량에서 비중으로', '총량 기준은 수집량이 늘어난 주에 키워드가 한꺼번에 급등으로 잡힘. 비중 기준으로 바꾸고 전 주차 재분석',
+          `<div style="position:relative;height:190px"><canvas id="m_norm"></canvas></div>
+           <div class="formula"><span><b>비중</b> = 키워드 게시물 ÷ 그 주 전체 게시물</span><span><b>z</b> = (이번 주 비중 − 과거 평균) ÷ 표준편차</span></div>`)}
+      </div>
+
+      ${card('트렌드 판정', '두 조건 중 하나만 충족해도 후보 · 광의어·브랜드명 제외 · 게시물 5건 이상 · 최대 10개',
+        `<div class="grid2 inner">
+           <div>${quad([['한 주 반짝', `z ≥ ${RULES.SURGE_Z.v} · 모멘텀 낮음`], ['강하게 뜨는 중', '급등 + 지속', 'hi'],
+                        ['후보 아님', '두 조건 모두 미달', 'dim'], ['꾸준히 오르는 중', `3주 연속 상승 · 모멘텀 ≥ ${RULES.SUSTAIN_MOMENTUM.v}`, 'hi2']])}
+             <div class="axis"><span>↑ z-score (게시물 비중)</span><span>모멘텀 (3개 데이터 주차 전 대비) →</span></div></div>
+           <div class="rulelist">
+             <div><span class="rk">순간 급등</span><span>게시물 비중 z ≥ <b>${RULES.SURGE_Z.v}</b> (과거 3개 데이터 주차 이상일 때)</span></div>
+             <div><span class="rk">지속 상승</span><span>3개 데이터 주차 연속 상승 + 모멘텀 ≥ <b>${RULES.SUSTAIN_MOMENTUM.v}배</b></span></div>
+             <div><span class="rk">제외</span><span>광의어(skincare 등) · 브랜드명 · 게시물 5건 미만</span></div>
+             <div><span class="rk">engagement</span><span>TikTok 조회×0.3 + 좋아요×1 + 댓글×2 · YouTube 조회×0.2 + 좋아요×1.5 + 댓글×3</span></div>
+           </div></div>`)}
+
+      ${card('대화 점유 (기회 유형)', `트렌드 캡션 전체에서 등록 브랜드 이름을 코드로 집계(캡션당 1회), LLM 집계 미사용 · 오른쪽은 ${esc(w.week)} 실제 값`,
+        `<div class="grid2 inner">
+           <div class="opp-ex">
+             <div><div class="oh">${mini('선점', 'opp')} 1위 50% 이상 · 3건 이상</div><div class="sharebar"><span class="seg-0" style="width:62%">A 62%</span><span class="seg-2" style="width:23%">B</span><span class="seg-3" style="width:15%">기타</span></div></div>
+             <div><div class="oh">${mini('각축', 'opp')} 과반 브랜드 없음</div><div class="sharebar"><span class="seg-0" style="width:30%">A 30%</span><span class="seg-1" style="width:25%">B 25%</span><span class="seg-2" style="width:20%">C</span><span class="seg-3" style="width:25%">기타</span></div></div>
+             <div><div class="oh">${mini('공백', 'opp')} K-브랜드 언급 없음</div><div class="sharebar empty-bar">언급 0건 · 맞는 제품 있으면 소통 공백, 없으면 제품 공백</div></div>
+             <div><div class="oh">${mini('판단 보류', 'trust hold')} 언급 ${RULES.MIN_MENTIONS.v}건 미만</div><div class="sharebar empty-bar">표본 부족으로 판단 안 함</div></div>
+           </div>
+           <div>${shares.length ? `<div style="position:relative;height:${Math.max(170, shares.length * 34 + 50)}px"><canvas id="m_share"></canvas></div>` : empty('트렌드 없음')}</div>
+         </div>`)}
+
+      <div class="grid2">
+        ${card('신뢰 배지', '트렌드 카드마다 하나 · 위에서부터 먼저 걸리는 것',
+          `<div class="badges">
+             <div>${mini('판단 보류', 'trust hold')}<span>브랜드 언급 ${RULES.MIN_MENTIONS.v}건 미만</span></div>
+             <div>${mini('관찰 중', 'trust watch')}<span>게시물 ${RULES.LOW_SAMPLE_POSTS.v}건 미만 · 연속 수집 ${RULES.MIN_CONSEC_WEEKS.v}주 미만 · engagement ${RULES.BIG_JUMP_RATIO.v}배 급등 · 조회수 ${pct(RULES.VIRAL_SHARE.v)} 이상이 게시물 1개</span></div>
+             <div>${mini('판단 가능', 'trust ok')}<span>경고 없음</span></div>
+             <div>${mini('검토 필요', 'review')}<span>자동 검증 실패 항목 있음 (카드 안 표시)</span></div>
+           </div>`)}
+        ${card('검증', `LLM 출력의 주장마다 검사 · ${esc(w.week)} 결과`,
+          `<div class="vflow"><span>LLM 출력<small>Sonnet</small></span><i>›</i><span>규칙 검사<small>인용·언급 수·한국어 대조</small></span><i>›</i><span>다른 모델 판정<small>Opus · 지지 / 근거 부족 / 모순</small></span></div>
+           ${v.rate === null ? empty('검증 기록 없음') : '<div style="position:relative;height:130px"><canvas id="m_valid"></canvas></div>'}`)}
+      </div>
+
+      <div class="grid2">
+        ${card('제품 전략', '가로 = 별점 추세 · 세로 = 리뷰 긍정 비율(65% 기준)',
+          `<div class="q3">
+             <div class="q2c hi2 fix"><b>FIX & PUSH</b><span>별점 하락 또는 부정 35% 이상 · 긍정 여부와 무관하게 우선 · 개선 후 확대</span></div>
+             <div class="q2c"><b>HOLD</b><span>긍정 · 별점 정체 · 유지·관찰</span></div>
+             <div class="q2c hi"><b>PUSH NOW</b><span>긍정 · 별점 상승 · 확대</span></div>
+             <div class="q2c dim mon"><b>MONITOR</b><span>긍정 기준 미달 · 하락 신호 없음 · 관찰</span></div>
+           </div>
+           <div class="axis"><span>↑ 리뷰 긍정 비율 (65%·랭킹 점수 0.7 기준)</span><span>별점 추세: 하락 │ 정체 │ 상승 →</span></div>`)}
+        ${card('방한 추천 점수', '제품별 0~1 · 상위 15개 표시',
+          `<div class="wbar"><span style="width:35%">SNS 트렌드 35%</span><span style="width:35%">VOC 긍정 35%</span><span style="width:30%">리테일 순위 30%</span></div>
+           <div class="formula"><span><b>리테일 점수</b> = max(0, 1 − (순위 − 1) ÷ 100)</span><span><b>월간 보기</b> = 주차 결과 합산, 새 판정 없음</span></div>`)}
+      </div>
+
+      <details class="card"><summary><b>화면 표시 기준값 전체</b> <span class="muted small">dashboard/app.js RULES 상수 · 협찬 태그 · 제외 브랜드명</span></summary>
+        <div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>상수</th><th>표시</th><th class="num">기준값</th><th>설명</th></tr></thead><tbody>${rules}</tbody></table></div>
+        <p class="small muted" style="margin-top:8px">협찬 태그: #ad, #sponsored, partner, #광고, 쿠팡 파트너스, gifted, 할인·promo code 패턴 (삭제하지 않고 표시만) · 일반 단어와 겹쳐 집계에서 뺀 브랜드명: ${esc((D.brand_stopwords || []).join(', '))}</p>
+      </details>
+    </div>`;
+    return [html, () => {
+      chart(document.getElementById('m_norm'), { type: 'bar',
+        data: { labels: ['2026-W21', '2026-W47'], datasets: [
+          { label: '총량 기준 (이전)', data: [38, 5], backgroundColor: LIGHT, borderRadius: 4 },
+          { label: '비중 기준 (현재)', data: [0, 0], backgroundColor: DARK, borderRadius: 4, minBarLength: 3 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } },
+          tooltip: { callbacks: { label: c => `${c.dataset.label}: z ≥ 2 키워드 ${c.raw}개` } } },
+          scales: { y: { beginAtZero: true, title: { display: true, text: 'z ≥ 2 키워드 수' }, grid: { color: '#f1f3f5' } }, x: { grid: { display: false } } } } });
+      if (shares.length) chart(document.getElementById('m_share'), { type: 'bar',
+        data: { labels: shares.map(s => s.kw), datasets: [{ data: shares.map(s => +(s.v * 100).toFixed(1)),
+          backgroundColor: shares.map(s => s.v >= 0.5 ? DARK : LIGHT), borderRadius: 4 }] },
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 70, top: 16 } },
+          plugins: { legend: { display: false }, title: { display: true, text: '트렌드별 1위 브랜드 점유 (%)', align: 'start', font: { size: 12 } },
+            tooltip: { callbacks: { label: c => `${shares[c.dataIndex].top} ${c.raw}% · 언급 ${shares[c.dataIndex].n}건` } } },
+          scales: { x: { min: 0, max: 100, grid: { color: '#f1f3f5' } }, y: { grid: { display: false } } } },
+        plugins: [{ id: 'th', afterDatasetsDraw(c) { const { ctx, chartArea: a, scales: s } = c; const x = s.x.getPixelForValue(50);
+          ctx.save(); ctx.strokeStyle = ACCENT; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(x, a.top); ctx.lineTo(x, a.bottom); ctx.stroke();
+          ctx.setLineDash([]); ctx.fillStyle = ACCENT; ctx.font = '11px Pretendard'; ctx.fillText('선점 기준 50%', x + 4, a.top - 4);
+          ctx.fillStyle = '#495057'; ctx.textBaseline = 'middle';
+          c.getDatasetMeta(0).data.forEach((b, i) => ctx.fillText(`${shares[i].top} ${shares[i].v ? pct(shares[i].v) : ''}`, b.x + 6, b.y)); ctx.restore(); } }] });
+      if (v.rate !== null) {
+        const rows = [['규칙', v.rule], ['Opus', v.llm]];
+        chart(document.getElementById('m_valid'), { type: 'bar',
+          data: { labels: rows.map(r => r[0]), datasets: [['pass', '통과', '#2b8a3e'], ['warn', '경고', '#f59f00'], ['fail', '실패', '#e03131']].map(([key, l, col]) =>
+            ({ label: l, data: rows.map(r => r[1][key]), backgroundColor: col })) },
+          options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } } },
+            scales: { x: { stacked: true, grid: { color: '#f1f3f5' } }, y: { stacked: true, grid: { display: false } } } } });
+      }
+    }];
   }
 
   const RENDER = { overview: pageOverview, trends: pageTrends, brands: pageBrands, products: pageProducts, inbound: pageInbound, quality: pageQuality, method: pageMethod };
