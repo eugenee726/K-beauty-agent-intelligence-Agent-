@@ -22,15 +22,15 @@ logger = logging.getLogger(__name__)
 
 # ── 기회 유형 / 전략 사분면 한국어 + 색상 매핑 ──
 OPP_META = {
-    # 현재 유형 (브랜드 중립 경쟁 구도)
-    "leader":      {"label": "선점",   "color": "#6a1b9a", "bg": "#f3e5f5"},
-    "contested":   {"label": "각축",   "color": "#1565c0", "bg": "#e3f2fd"},
-    "white_space": {"label": "공백",   "color": "#2e7d32", "bg": "#e8f5e9"},
+    # 현재 유형 (대화 점유 구도)
+    "leader":      {"label": "선점", "color": "#d6336c", "bg": "#fbe9f0"},
+    "contested":   {"label": "각축", "color": "#495057", "bg": "#f1f3f5"},
+    "white_space": {"label": "공백", "color": "#868e96", "bg": "#f8f9fa"},
     # 과거 주차(AP 관점) 데이터 표시용
-    "amplify":   {"label": "즉시 강화",     "color": "#e91e8c", "bg": "#ffe0f0"},
-    "position":  {"label": "차별화",        "color": "#1565c0", "bg": "#e3f2fd"},
-    "counter":   {"label": "대응 필요",     "color": "#e65100", "bg": "#fff3e0"},
-    "new_entry": {"label": "신규 진입",     "color": "#2e7d32", "bg": "#e8f5e9"},
+    "amplify":   {"label": "즉시 강화", "color": "#d6336c", "bg": "#fbe9f0"},
+    "position":  {"label": "차별화",    "color": "#495057", "bg": "#f1f3f5"},
+    "counter":   {"label": "대응 필요", "color": "#495057", "bg": "#f1f3f5"},
+    "new_entry": {"label": "신규 진입", "color": "#868e96", "bg": "#f8f9fa"},
 }
 # 기회 유형 짧은 설명 (요약 카드용)
 OPP_DESC = {
@@ -44,10 +44,10 @@ OPP_DESC = {
 }
 CURRENT_OPP_TYPES = ("leader", "contested", "white_space")
 QUAD_META = {
-    "PUSH_NOW":    {"label": "PUSH NOW",     "color": "#e91e8c", "bg": "#ffe0f0"},
-    "FIX_AND_PUSH":{"label": "FIX & PUSH",  "color": "#e65100", "bg": "#fff3e0"},
-    "HOLD":        {"label": "HOLD",         "color": "#1565c0", "bg": "#e3f2fd"},
-    "MONITOR":     {"label": "MONITOR",      "color": "#666",    "bg": "#f5f5f5"},
+    "PUSH_NOW":    {"label": "PUSH NOW",   "color": "#d6336c", "bg": "#fbe9f0"},
+    "FIX_AND_PUSH":{"label": "FIX & PUSH", "color": "#495057", "bg": "#f1f3f5"},
+    "HOLD":        {"label": "HOLD",       "color": "#868e96", "bg": "#f8f9fa"},
+    "MONITOR":     {"label": "MONITOR",    "color": "#adb5bd", "bg": "#f8f9fa"},
 }
 # 전략 사분면 짧은 설명 (요약 카드용)
 QUAD_DESC = {
@@ -67,10 +67,10 @@ TIER_META = {
 }
 # 트렌드 모양 (opportunity_type과 독립된 축)
 SHAPE_META = {
-    "sustained": {"label": "📈 지속 상승", "color": "#2e7d32", "bg": "#e8f5e9"},
-    "spike":     {"label": "⚡ 순간 급등", "color": "#e65100", "bg": "#fff3e0"},
-    "emerging":  {"label": "🌱 신규 등장", "color": "#6a1b9a", "bg": "#f3e5f5"},
-    "steady":    {"label": "➖ 완만/정체", "color": "#666",    "bg": "#f5f5f5"},
+    "sustained": {"label": "지속 상승", "color": "#d6336c", "bg": "#fbe9f0"},
+    "spike":     {"label": "순간 급등", "color": "#495057", "bg": "#f1f3f5"},
+    "emerging":  {"label": "신규 등장", "color": "#868e96", "bg": "#f8f9fa"},
+    "steady":    {"label": "완만·정체", "color": "#adb5bd", "bg": "#f8f9fa"},
 }
 
 # 차트에서 제외할 광의어 (브랜드·성분·제품유형은 유지)
@@ -83,11 +83,7 @@ EXCLUDE_KEYWORDS = {
 }
 
 # 라인 차트용 색상 팔레트
-LINE_COLORS = [
-    "#e91e8c", "#6c4ab6", "#1565c0", "#2e7d32", "#e65100",
-    "#00838f", "#c2185b", "#5d4037", "#7b1fa2", "#f9a825",
-    "#0097a7", "#d84315",
-]
+LINE_COLORS = ["#d6336c"]  # 미니 차트는 강조색 하나로 통일
 
 
 class HTMLReportTool:
@@ -179,7 +175,21 @@ class HTMLReportTool:
             mini_charts[cid] = {"weeks": kw_weeks, "data": series,
                                 "color": LINE_COLORS[i % len(LINE_COLORS)]}
 
-        chart_data = {"bar": bar_data, "mini": mini_charts}
+        # 트렌드 레이더: x = 모멘텀(로그), y = z-score(10 이상은 상단 고정), 크기 = 게시물 수
+        radar = []
+        for i, r in enumerate(rows):
+            z = r["z_score"] or 0.0
+            shp = SHAPE_META.get(r["trend_shape"] or "steady", SHAPE_META["steady"])
+            radar.append({
+                "kw": r["keyword"], "idx": i,
+                "x": max(float(r["momentum_score"] or 0.0), 0.5),
+                "y": min(z, 10.0), "z": round(z, 2),
+                "posts": int(r["post_count"] or 0),
+                "r": round(6 + min(int(r["post_count"] or 0), 60) ** 0.5 * 2.2, 1),
+                "color": shp["color"], "shape": shp["label"],
+                "opp": OPP_META.get(r["opportunity_type"] or "white_space", OPP_META["white_space"])["label"],
+            })
+        chart_data = {"radar": radar, "mini": mini_charts}
 
         # 기회 유형 / 트렌드 모양 카운트
         opp_counts = {}
@@ -228,21 +238,24 @@ class HTMLReportTool:
               <option value="eng">Engagement 높은 순</option>
             </select>
           </label>
-          <span id="oppFilterTag" style="font-size:0.78rem;color:#e91e8c;display:none">
+          <span id="oppFilterTag" style="font-size:0.78rem;color:#d6336c;display:none">
             · 필터: <b id="oppFilterName"></b>
             <a onclick="filterOpp('ALL')" style="cursor:pointer;color:#999;text-decoration:underline;margin-left:4px">해제</a>
           </span>
         </div>'''
         summary_html += filter_html
 
-        # 상단 막대차트 복구 (브랜드 포함 키워드 비교)
-        chart_html = '''
+        # 트렌드 레이더
+        legend = " · ".join(
+            f'<span style="color:{m["color"]}">●</span> {m["label"]}' for m in SHAPE_META.values())
+        chart_html = f'''
         <div class="card">
-          <h3 style="margin-bottom:0.4rem">📱 SNS 키워드 Engagement (TikTok + YouTube)</h3>
-          <div style="font-size:0.74rem;color:#aaa;margin-bottom:0.9rem">
-            ※ kbeauty 등 광의어는 제외, 브랜드·성분·제품유형 키워드 포함 · 산식은 하단 참조
+          <h3 class="blk">트렌드 레이더</h3>
+          <div class="muted" style="font-size:0.75rem;margin-bottom:0.6rem">
+            가로 = 모멘텀(최근 3개 주차 성장 배수, 로그) · 세로 = z-score(평소 대비 급등, 10 이상은 맨 위) ·
+            크기 = 게시물 수 · 색 = 트렌드 모양 ({legend}). 점을 누르면 아래 카드로 이동합니다.
           </div>
-          <div style="position:relative;height:300px"><canvas id="snsChart"></canvas></div>
+          <div style="position:relative;height:340px"><canvas id="radarChart"></canvas></div>
         </div>'''
 
         # 키워드 카드 목록
@@ -260,15 +273,15 @@ class HTMLReportTool:
                 comps = {}
 
             brand_badges = "".join(
-                f'<span style="background:#f3e5f5;color:#6a1b9a;border-radius:12px;padding:2px 10px;font-size:0.78rem;margin:2px;display:inline-block">{b.upper()}</span>'
+                f'<span style="background:#f1f3f5;color:#495057;border-radius:12px;padding:2px 10px;font-size:0.78rem;margin:2px;display:inline-block" title="이 니즈에 맞는 제품 보유">{b.upper()}</span>'
                 for b in brands
             )
             comp_badges = "".join(
-                f'<span style="background:#eceff1;color:#37474f;border-radius:12px;padding:2px 10px;font-size:0.78rem;margin:2px;display:inline-block">💬 {c}</span>'
+                f'<span style="background:#fff;border:1px solid #dee2e6;color:#495057;border-radius:12px;padding:2px 10px;font-size:0.78rem;margin:2px;display:inline-block" title="캡션 언급">언급 {c}</span>'
                 for c in list(comps.keys())[:3]
             )
-            lead_icon  = "🎵" if r["lead_platform"] == "tiktok" else "▶️" if r["lead_platform"] == "youtube" else "📡"
-            cross_badge = '<span style="background:#e8f5e9;color:#1b5e20;border-radius:12px;padding:2px 8px;font-size:0.75rem;margin-left:6px">크로스플랫폼</span>' if r["is_cross_platform"] else ""
+            lead_icon  = "선행"
+            cross_badge = '<span style="background:#f1f3f5;color:#495057;border-radius:12px;padding:2px 8px;font-size:0.75rem;margin-left:6px">TikTok·YouTube 동시</span>' if r["is_cross_platform"] else ""
             shape = r["trend_shape"] or "steady"
             shape_meta = SHAPE_META.get(shape, SHAPE_META["steady"])
             shape_badge = f'<span style="background:{shape_meta["bg"]};color:{shape_meta["color"]};border-radius:12px;padding:3px 12px;font-size:0.8rem;font-weight:600;margin-left:8px">{shape_meta["label"]}</span>'
@@ -278,7 +291,7 @@ class HTMLReportTool:
 
             need_html = (
                 f'<div style="font-size:0.85rem;color:#444;margin-bottom:0.5rem">'
-                f'<strong style="color:#6a1b9a">🧬 소비자 니즈</strong> · {r["consumer_need"]}</div>'
+                f'<strong>소비자 니즈</strong> · {r["consumer_need"]}</div>'
             ) if r["consumer_need"] else ""
 
             # SNS 근거 인용 (direct 캡션 인용구)
@@ -291,7 +304,7 @@ class HTMLReportTool:
                 )
                 ev_html = (
                     f'<div style="margin-bottom:0.5rem">'
-                    f'<strong style="color:#00838f;font-size:0.8rem">💬 SNS 근거</strong>{items}</div>'
+                    f'<strong style="font-size:0.8rem">SNS 근거</strong>{items}</div>'
                 )
 
             eng_cur = round(eng_map.get(r["keyword"], {}).get(week, 0), 0)
@@ -299,7 +312,7 @@ class HTMLReportTool:
             mom_sort = r["momentum_score"] or 0
 
             cards_html += f'''
-            <div class="card trend-card" data-opp="{ot}" data-shape="{shape}"
+            <div class="card trend-card" id="card_{i}" data-opp="{ot}" data-shape="{shape}"
                  data-z="{z_sort}" data-mom="{mom_sort}" data-eng="{eng_cur}"
                  style="border-left:4px solid {meta["color"]}">
               <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">
@@ -318,12 +331,12 @@ class HTMLReportTool:
               <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-start">
                 <div style="flex:1;min-width:240px">
                   <div style="font-size:0.85rem;color:#333;margin-bottom:0.5rem">
-                    <strong style="color:{meta["color"]}">🏷️ 브랜드 경쟁 구도</strong> · {r["insight_summary"] or ""}
+                    <strong style="color:{meta["color"]}">대화 점유</strong> · {r["insight_summary"] or ""}
                   </div>
                   {need_html}
                   {ev_html}
                   <div style="font-size:0.82rem;background:#f9f9f9;border-radius:8px;padding:0.6rem;color:#555">
-                    💡 {r["action_rec"] or ""}
+                    <strong>제안</strong> · {r["action_rec"] or ""}
                   </div>
                 </div>
                 <div style="width:240px;height:130px;flex-shrink:0">
@@ -332,33 +345,27 @@ class HTMLReportTool:
               </div>
             </div>'''
 
-        # 하단: 산식 & 트렌드 키워드 선정 기준
+        # 하단: 산식 & 선정 기준
         methodology_html = '''
-        <div class="card" style="margin-top:1.5rem;background:#fafafe">
-          <h3 style="font-size:0.95rem;margin-bottom:0.8rem">📐 산식 & 트렌드 키워드 선정 기준</h3>
+        <div class="card" style="margin-top:1.5rem;background:#fafafa">
+          <h3 class="blk">산식과 선정 기준</h3>
           <div style="font-size:0.8rem;color:#555;line-height:1.9">
-            <div><strong>Engagement</strong> :
-              <code style="background:#f3f0fa;padding:1px 6px;border-radius:4px">TikTok</code>
-              조회수×0.3 + 좋아요×1.0 + 댓글×2.0 &nbsp;|&nbsp;
-              <code style="background:#fdeef5;padding:1px 6px;border-radius:4px">YouTube</code>
-              조회수×0.2 + 좋아요×1.5 + 댓글×3.0
-            </div>
-            <div><strong>Z-score</strong> : (이번 주 engagement − 직전 4주 평균) ÷ 직전 4주 표준편차
-              &nbsp;— 평소 대비 <b>순간 급등</b> 강도 (≥2.0이면 이상치)</div>
-            <div><strong>모멘텀</strong> : 현재 주 engagement ÷ 3주 전 engagement
-              &nbsp;— 최근 3주 <b>지속 상승</b> 배수 (weeks_rising = 연속 상승 단계)</div>
+            <div><strong>Engagement</strong> : TikTok 조회×0.3 + 좋아요×1.0 + 댓글×2.0 · YouTube 조회×0.2 + 좋아요×1.5 + 댓글×3.0</div>
+            <div><strong>Z-score</strong> : (이번 주 engagement − 과거 주차 평균) ÷ 표준편차. 과거 데이터가 3개 주차 이상일 때 계산</div>
+            <div><strong>모멘텀</strong> : 이번 주 ÷ 데이터가 있는 3번째 전 주차 engagement</div>
           </div>
-          <div style="font-size:0.8rem;color:#555;line-height:1.9;margin-top:0.8rem;
-                      border-top:1px solid #eee;padding-top:0.7rem">
-            <strong>트렌드 키워드 선정 기준</strong> (아래 순서로 필터)
+          <div style="font-size:0.8rem;color:#555;line-height:1.9;margin-top:0.8rem;border-top:1px solid #eee;padding-top:0.7rem">
+            <strong>트렌드 키워드 선정</strong>
             <ol style="margin:0.3rem 0 0 1.2rem;padding:0;color:#666">
-              <li>SNS 키워드별 Z-score 계산 (TikTok+YouTube 합산)</li>
-              <li>이상치 키워드 선별: <b>Z-score ≥ 2.0</b> (is_anomaly)</li>
-              <li>광의어·브랜드명 키워드 제외 (kbeauty, laneige 등 — 브랜드는 별도 집계)</li>
-              <li>실행 가능 볼륨 확보: <b>포스트 수 ≥ 5</b></li>
-              <li>분석 신뢰도 확보: 캡션 샘플 ≥ 3건</li>
-              <li>상위 <b>최대 10개</b> 키워드 → LLM 인사이트 분석</li>
+              <li>순간 급등(z ≥ 2.0) 또는 지속 상승(3개 주차 연속 상승 + 모멘텀 ≥ 1.5)</li>
+              <li>광의어(kbeauty, routine 등)·브랜드명 제외 — 브랜드는 '브랜드 점유' 탭에서 따로 집계</li>
+              <li>게시물 ≥ 5, 캡션 샘플 ≥ 3</li>
+              <li>최대 10개 → LLM 인사이트(Sonnet) → 검증(규칙 + Opus 판정)</li>
             </ol>
+          </div>
+          <div style="font-size:0.8rem;color:#555;line-height:1.9;margin-top:0.8rem;border-top:1px solid #eee;padding-top:0.7rem">
+            <strong>대화 점유(기회 유형)</strong> — 캡션 속 K-뷰티 브랜드 언급 기준. 판매처·사람 이름·서구 브랜드 제외<br>
+            선점: 1위 브랜드 ≥ 50% 그리고 ≥ 3건 · 각축: 과반 브랜드 없음 · 공백: K-브랜드 언급 없음(맞는 제품이 있으면 소통 공백, 없으면 제품 공백)
           </div>
         </div>'''
 
@@ -368,7 +375,108 @@ class HTMLReportTool:
         return html, chart_data
 
     # ──────────────────────────────────────────────────────
-    # Tab 2: 제품 전략
+    # Tab 2: 브랜드 점유
+    # ──────────────────────────────────────────────────────
+    def _brand_tab(self, week: str) -> tuple[str, dict]:
+        from agents.decision_agent import DecisionAgent
+        from tools.quality.insight_checks import _brand_key
+        with self._conn() as conn:
+            known = DecisionAgent._known_brand_map(conn)
+            names, company = {}, {}
+            for r in conn.execute("SELECT brand_id, brand_name_en, company FROM dim_brand"):
+                names[r["brand_id"]] = r["brand_name_en"] or r["brand_id"]
+                company[r["brand_id"]] = r["company"]
+            ins = conn.execute("SELECT keyword, competitor_mentions FROM fact_trend_insights "
+                               "WHERE week=? ORDER BY z_score DESC", (week,)).fetchall()
+            ranked = conn.execute("""SELECT p.brand_id, COUNT(DISTINCT r.product_id) n
+                                     FROM fact_retail_rankings r
+                                     JOIN dim_product p ON p.product_id = r.product_id
+                                     WHERE r.week=? AND r.platform_id LIKE 'oy_%'
+                                     GROUP BY p.brand_id ORDER BY n DESC""", (week,)).fetchall()
+
+        # 트렌드 × 브랜드 언급 (알려진 K-브랜드만)
+        kws = [r["keyword"] for r in ins]
+        matrix: dict = {}
+        for r in ins:
+            try:
+                m = json.loads(r["competitor_mentions"] or "{}")
+            except ValueError:
+                m = {}
+            if not isinstance(m, dict):
+                continue
+            for name, n in m.items():
+                bid = known.get(_brand_key(name))
+                if not bid:
+                    continue
+                try:
+                    n = max(int(n), 1)
+                except (TypeError, ValueError):
+                    n = 1
+                row = matrix.setdefault(bid, {})
+                row[r["keyword"]] = row.get(r["keyword"], 0) + n
+        totals = sorted(((b, sum(v.values())) for b, v in matrix.items()), key=lambda x: -x[1])
+        all_mentions = sum(t for _, t in totals) or 1
+        top = totals[:12]
+        vmax = max((c for v in matrix.values() for c in v.values()), default=1)
+
+        if top:
+            head = "".join(f'<th style="text-align:center;font-size:0.75rem">{k.replace("_", " ")}</th>' for k in kws)
+            body = ""
+            for b, t in top:
+                cells = ""
+                for k in kws:
+                    c = matrix[b].get(k, 0)
+                    a = 0 if not c else 0.15 + 0.85 * c / vmax
+                    fg = "#fff" if a > 0.55 else "#333"
+                    cells += f'<td style="text-align:center;background:rgba(214,51,108,{a:.2f});color:{fg}">{c or ""}</td>'
+                body += (f'<tr><td style="white-space:nowrap"><strong>{names.get(b, b)}</strong></td>{cells}'
+                         f'<td style="text-align:center">{t}</td>'
+                         f'<td style="text-align:center">{t / all_mentions:.0%}</td></tr>')
+            heat_html = (
+                '<div class="card" style="overflow-x:auto"><h3 class="blk">트렌드별 브랜드 언급</h3>'
+                '<div class="muted" style="font-size:0.75rem;margin-bottom:0.6rem">이번 주 트렌드 캡션 샘플에서 언급된 '
+                'K-뷰티 브랜드 상위 12개. 판매처·사람 이름·서구 브랜드는 제외. 진할수록 언급이 많음.</div>'
+                f'<table><thead><tr><th>브랜드</th>{head}<th>합계</th><th>점유</th></tr></thead>'
+                f'<tbody>{body}</tbody></table></div>')
+        else:
+            heat_html = '<div class="card muted">이번 주 트렌드 캡션에서 언급된 K-뷰티 브랜드가 없습니다.</div>'
+
+        # 리테일(OY 랭킹) 등장 제품 수 — 브랜드·회사
+        rk = [(r["brand_id"], r["n"]) for r in ranked]
+        by_co: dict = {}
+        for b, n in rk:
+            co = company.get(b)
+            if not co:
+                continue
+            entry = by_co.setdefault(co, [0, []])
+            entry[0] += n
+            entry[1].append(names.get(b, b))
+        co_rows = sorted(((c, v[0], v[1]) for c, v in by_co.items()), key=lambda x: -x[1])[:8]
+        co_html = "".join(
+            f'<tr><td><strong>{c}</strong></td><td style="text-align:center">{n}</td>'
+            f'<td class="muted" style="font-size:0.78rem">{", ".join(bs[:6])}{" …" if len(bs) > 6 else ""}</td></tr>'
+            for c, n, bs in co_rows)
+        retail_html = f'''
+        <div class="grid2">
+          <div class="card"><h3 class="blk">트렌드 대화 점유 (이번 주 트렌드 합산, %)</h3>
+            <div style="position:relative;height:300px"><canvas id="shareChart"></canvas></div></div>
+          <div class="card"><h3 class="blk">OY 랭킹 등장 제품 수 (브랜드 상위 12)</h3>
+            <div style="position:relative;height:300px"><canvas id="retailChart"></canvas></div></div>
+        </div>
+        <div class="card" style="overflow-x:auto"><h3 class="blk">회사별 OY 랭킹 등장 제품 수</h3>
+          <div class="muted" style="font-size:0.75rem;margin-bottom:0.6rem">회사 정보가 등록된 브랜드 기준. SNS 대화 점유와 리테일 존재감을 나란히 비교할 수 있습니다.</div>
+          <table><thead><tr><th>회사</th><th>랭킹 제품</th><th>브랜드</th></tr></thead><tbody>{co_html}</tbody></table>
+        </div>'''
+
+        data = {
+            "share": {"labels": [names.get(b, b) for b, _ in top[:10]],
+                      "data": [round(t / all_mentions * 100, 1) for _, t in top[:10]]},
+            "retail": {"labels": [names.get(b, b) for b, _ in rk[:12]], "data": [n for _, n in rk[:12]]},
+        }
+        return heat_html + retail_html, data
+
+    # ──────────────────────────────────────────────────────
+    # Tab 3: 제품·VOC (+ 방한 추천)
     # ──────────────────────────────────────────────────────
     def _product_tab(self, week: str) -> tuple[str, dict]:
         with self._conn() as conn:
@@ -419,7 +527,7 @@ class HTMLReportTool:
         # 검색 + 정렬 컨트롤
         control_html = '''
         <div style="margin-bottom:1rem;display:flex;gap:1rem;flex-wrap:wrap;align-items:center">
-          <input id="prodSearch" type="text" placeholder="🔍 제품·브랜드 검색"
+          <input id="prodSearch" type="text" placeholder="제품·브랜드 검색"
             oninput="searchProducts(this.value)"
             style="padding:7px 14px;border-radius:8px;border:1px solid #ddd;font-size:0.85rem;min-width:220px"/>
           <label style="font-size:0.82rem;color:#555">정렬
@@ -429,7 +537,7 @@ class HTMLReportTool:
               <option value="rating">평점 높은 순</option>
             </select>
           </label>
-          <span id="quadFilterTag" style="font-size:0.78rem;color:#e91e8c;display:none">
+          <span id="quadFilterTag" style="font-size:0.78rem;color:#d6336c;display:none">
             · 필터: <b id="quadFilterName"></b>
             <a onclick="filterQuad('ALL')" style="cursor:pointer;color:#999;text-decoration:underline;margin-left:4px">해제</a>
           </span>
@@ -440,7 +548,7 @@ class HTMLReportTool:
         for r in rows:
             quad = r["strategy_quad"] or "MONITOR"
             scatter_pts.append({
-                "x": int(r["voc_velocity"]) if r["voc_velocity"] is not None else 0,
+                "x": round(r["rating_trend"], 3) if r["rating_trend"] is not None else 0,
                 "y": round(r["sentiment_pos"], 3) if r["sentiment_pos"] is not None else 0,
                 "label": (r["product_name_en"] or r["product_id"] or "")[:30],
                 "brand": r["brand_name_en"] or r["brand_id"] or "",
@@ -449,10 +557,10 @@ class HTMLReportTool:
             })
         scatter_html = '''
         <div class="card">
-          <h3 style="margin-bottom:0.4rem">🎯 전략 분포 (리뷰 유입 × VOC 긍정도)</h3>
-          <div style="font-size:0.74rem;color:#aaa;margin-bottom:0.6rem">
-            가로 = 리뷰 유입 증감(0 기준) · 세로 = VOC 긍정도(0.65 기준) · 점 색 = 전략 분류
-            <br>※ 리뷰 유입은 직전 주차 대비 값이라, 연속 2주 수집이 쌓인 뒤(W26+)부터 분산됨
+          <h3 class="blk">전략 분포 (별점 추세 × VOC 긍정도)</h3>
+          <div class="muted" style="font-size:0.75rem;margin-bottom:0.6rem">
+            가로 = 플랫폼 평균 별점의 주간 변화(0 기준) · 세로 = 리뷰 긍정 비율(0.65 기준) · 점 색 = 전략 분류.
+            별점 추세가 없는 제품은 가로 0에 놓입니다.
           </div>
           <div style="position:relative;height:360px"><canvas id="quadScatter"></canvas></div>
         </div>'''
@@ -605,13 +713,14 @@ class HTMLReportTool:
         # 하단: 산식 (4분면 분류 기준은 제외, 지표 산식만)
         methodology_html = '''
         <div class="card" style="margin-top:1.5rem;background:#fafafe">
-          <h3 style="font-size:0.95rem;margin-bottom:0.8rem">📐 지표 산식 (VOC 중심)</h3>
+          <h3 class="blk">지표와 전략 분류</h3>
           <div style="font-size:0.8rem;color:#555;line-height:1.9">
             <div><strong>VOC 긍정도</strong> : 리뷰 감성 분석 긍정 비율. <b>0.65 이상 = 긍정</b> (부정 0.35 이상 = 불만)</div>
-            <div><strong>리뷰 유입(velocity)</strong> : 플랫폼 전체 누적 리뷰 수의 <b>주간 증감</b></div>
+            <div><strong>리뷰 유입</strong> : 플랫폼 누적 리뷰 수의 주간 증가분 (표시용 — 누적값이라 거의 항상 양수여서 분류에는 쓰지 않음)</div>
+            <div><strong>분류</strong> : PUSH NOW = 긍정 + 별점 상승 + 불만 없음 · FIX &amp; PUSH = 별점 하락 또는 부정 ≥ 0.35 · HOLD = 긍정이나 정체 · MONITOR = 그 외</div>
             <div><strong>별점 추세</strong> : 플랫폼 전체 평균 평점의 <b>주간 변화</b> (＋ = 만족도 상승)</div>
             <div><strong>리테일 점수</strong>(보조) : max(0, 1 − (최고순위 − 1) ÷ 100)
-              &nbsp;— OliveYoung 랭킹 Top 100 기준. <b></div>
+              — OliveYoung 랭킹 Top 100 기준</div>
           </div>
         </div>'''
 
@@ -641,18 +750,18 @@ class HTMLReportTool:
 
         # 상위 3개 포디움
         podium_html = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;margin-bottom:2rem">'
-        medals = ["🥇", "🥈", "🥉"]
+        medals = ["1", "2", "3"]
         for i, r in enumerate(rows[:3]):
             score_pct = int(r["pick_score"] * 100)
             podium_html += f'''
-            <div class="card" style="text-align:center;border-top:4px solid #e91e8c;padding:1.5rem">
-              <div style="font-size:2rem">{medals[i]}</div>
+            <div class="card" style="text-align:center;border-top:4px solid #d6336c;padding:1.5rem">
+              <div style="font-size:1.5rem;font-weight:700;color:#868e96">{medals[i]}</div>
               <div style="font-weight:700;font-size:1rem;margin:0.5rem 0">{(r["product_name_en"] or "")[:25]}</div>
               <div style="font-size:0.85rem;color:#666;margin-bottom:0.8rem">{r["brand_name_en"] or "—"}</div>
-              <div style="font-size:1.4rem;font-weight:700;color:#e91e8c">{r["pick_score"]:.3f}</div>
+              <div style="font-size:1.4rem;font-weight:700;color:#d6336c">{r["pick_score"]:.3f}</div>
               <div style="font-size:0.75rem;color:#aaa">pick score</div>
               <div style="height:6px;background:#f0f0f0;border-radius:3px;margin-top:0.8rem">
-                <div style="width:{score_pct}%;height:6px;background:linear-gradient(90deg,#e91e8c,#6c4ab6);border-radius:3px"></div>
+                <div style="width:{score_pct}%;height:6px;background:#d6336c;border-radius:3px"></div>
               </div>
             </div>'''
         podium_html += '</div>'
@@ -688,9 +797,9 @@ class HTMLReportTool:
               <td style="text-align:center;color:{voc_color};font-weight:600">{voc_str}</td>
               <td style="text-align:center">{sns_icon}</td>
               <td>
-                <div style="font-weight:600;font-size:0.9rem;color:#e91e8c">{r["pick_score"]:.3f}</div>
+                <div style="font-weight:600;font-size:0.9rem;color:#d6336c">{r["pick_score"]:.3f}</div>
                 <div style="height:4px;background:#f0f0f0;border-radius:2px;margin-top:3px">
-                  <div style="width:{score_pct}%;height:4px;background:linear-gradient(90deg,#e91e8c,#6c4ab6);border-radius:2px"></div>
+                  <div style="width:{score_pct}%;height:4px;background:#d6336c;border-radius:2px"></div>
                 </div>
               </td>
               <td style="font-size:0.8rem;color:#555;max-width:220px">{(r["pick_reason"] or "")[:100]}</td>
@@ -701,7 +810,7 @@ class HTMLReportTool:
         # 선정 기준 설명 (2026-06 개편: Sephora 포함 + SNS 강화)
         criteria_html = '''
         <div class="card" style="margin-top:1.5rem;background:#fafafe">
-          <h3 style="margin-bottom:0.8rem;font-size:0.95rem">📌 Pick Score 산출 기준</h3>
+          <h3 class="blk">Pick Score 산출 기준</h3>
           <div style="font-size:0.84rem;color:#555;line-height:1.8">
             <strong>Pick Score</strong> =
             <b style="color:#1565c0">0.35 × SNS 트렌드 강도</b>
@@ -850,6 +959,8 @@ class HTMLReportTool:
         product_html, product_data = self._product_tab(week)
         chart_data["scatter"] = product_data.get("scatter", [])
         inbound_html             = self._inbound_tab(week)
+        brand_html, brand_data   = self._brand_tab(week)
+        chart_data["brand"]      = brand_data
         ov                       = self._overview(week)
 
         # 요약 통계
@@ -899,6 +1010,9 @@ class HTMLReportTool:
   .summary ol {{ padding-left: 1.2rem; font-size: 0.875rem; line-height: 1.8; }}
   .pill {{ display: inline-block; margin: 0 0.4rem; padding: 0 0.5rem; border-radius: 999px;
            background: #fbe9f0; color: var(--primary); font-size: 0.75rem; }}
+  .grid2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }}
+  .sec-title {{ font-size: 1.1rem; margin: 2rem 0 0.4rem; }}
+  .trend-card.flash {{ box-shadow: 0 0 0 3px var(--primary); transition: box-shadow .3s; }}
   .blk {{ font-size: 0.875rem; color: var(--muted); font-weight: 600; margin-bottom: 0.6rem; }}
   .bchip {{ display: inline-block; margin: 0 0.5rem 0.4rem 0; padding: 0.3rem 0.7rem; border-radius: 999px;
             background: #fbe9f0; font-size: 0.875rem; }}
@@ -938,6 +1052,7 @@ class HTMLReportTool:
             border-top: 1px solid var(--border); margin-top: 2rem; }}
   @media (max-width: 768px) {{
     .kpis {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    .grid2 {{ grid-template-columns: 1fr; }}
     .header-stats {{ gap: 1rem; }}
     .tab {{ padding: 0.8rem 0.8rem; font-size: 0.82rem; }}
   }}
@@ -959,14 +1074,18 @@ class HTMLReportTool:
 </section>
 
 <div class="tabs">
-  <div class="tab active" onclick="switchTab(0)"> 트렌드 인사이트</div>
-  <div class="tab"        onclick="switchTab(1)"> 제품 전략</div>
-  <div class="tab"        onclick="switchTab(2)"> 방한 추천</div>
+  <div class="tab active" onclick="switchTab(0)">트렌드 레이더</div>
+  <div class="tab"        onclick="switchTab(1)">브랜드 점유</div>
+  <div class="tab"        onclick="switchTab(2)">제품·VOC</div>
 </div>
 
 <div class="section active" id="s0">{trend_html}</div>
-<div class="section"        id="s1">{product_html}</div>
-<div class="section"        id="s2">{inbound_html}</div>
+<div class="section"        id="s1">{brand_html}</div>
+<div class="section"        id="s2">{product_html}
+  <h2 class="sec-title" id="inbound">방한 추천 Top 15</h2>
+  <div class="muted" style="font-size:0.8rem;margin-bottom:0.8rem">한국을 찾는 해외 소비자가 쇼핑리스트에 넣을 만한 제품 — 해외 화제성(SNS) + 만족도(VOC) + 리테일 인기</div>
+  {inbound_html}
+</div>
 
 <footer>K-beauty Intelligence Agent v3</footer>
 
@@ -974,7 +1093,8 @@ class HTMLReportTool:
 function switchTab(idx) {{
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', i===idx));
   document.querySelectorAll('.section').forEach((s,i) => s.classList.toggle('active', i===idx));
-  if (idx === 1) renderScatter();  // 제품 탭 첫 진입 시 산점도 렌더 (숨김 캔버스 사이즈 이슈 회피)
+  if (idx === 1) renderBrandCharts();  // 숨김 캔버스 크기 문제를 피하려고 탭 첫 진입 시 렌더
+  if (idx === 2) renderScatter();
 }}
 
 const QUAD_LABELS = {{ PUSH_NOW:'PUSH NOW', FIX_AND_PUSH:'FIX & PUSH', HOLD:'HOLD', MONITOR:'MONITOR' }};
@@ -1053,24 +1173,76 @@ function sortCards(key) {{
 // 차트 데이터
 const chartData = {json.dumps(chart_data)};
 
-// 상단 막대 차트 — 키워드별 TikTok/YouTube engagement (브랜드 포함)
-const barData = chartData.bar || {{}};
-if (barData.labels && barData.labels.length) {{
-  new Chart(document.getElementById('snsChart'), {{
-    type: 'bar',
-    data: {{
-      labels: barData.labels,
-      datasets: [
-        {{ label: 'TikTok',  data: barData.tiktok,  backgroundColor: 'rgba(105,201,208,0.8)', borderColor: '#69C9D0', borderWidth: 1 }},
-        {{ label: 'YouTube', data: barData.youtube, backgroundColor: 'rgba(255,0,0,0.7)',     borderColor: '#FF0000', borderWidth: 1 }},
-      ]
-    }},
+// 트렌드 레이더 (버블)
+Chart.defaults.font.family = "Pretendard, -apple-system, sans-serif";
+const radar = chartData.radar || [];
+if (radar.length) {{
+  new Chart(document.getElementById('radarChart'), {{
+    type: 'bubble',
+    data: {{ datasets: [{{
+      data: radar.map(p => ({{ x: p.x, y: p.y, r: p.r }})),
+      backgroundColor: radar.map(p => p.color + 'aa'),
+      borderColor: radar.map(p => p.color),
+    }}] }},
     options: {{
       responsive: true, maintainAspectRatio: false,
-      plugins: {{ legend: {{ position: 'top' }} }},
-      scales: {{ x: {{ stacked: false }}, y: {{ beginAtZero: true }} }}
-    }}
+      layout: {{ padding: {{ right: 20 }} }},
+      plugins: {{
+        legend: {{ display: false }},
+        tooltip: {{ callbacks: {{ label: (c) => {{
+          const p = radar[c.dataIndex];
+          return `${{p.kw}} · ${{p.shape}} · ${{p.opp}} · z ${{p.z}} · 모멘텀 ${{p.x.toFixed(1)}}× · 게시물 ${{p.posts}}`;
+        }} }} }}
+      }},
+      onClick: (e, els) => {{
+        if (!els.length) return;
+        const card = document.getElementById('card_' + radar[els[0].index].idx);
+        if (!card) return;
+        card.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+        card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1600);
+      }},
+      scales: {{
+        x: {{ type: 'logarithmic', title: {{ display: true, text: '모멘텀 (배수, 로그)' }} }},
+        y: {{ suggestedMin: -1, max: 11, title: {{ display: true, text: 'z-score' }} }}
+      }}
+    }},
+    plugins: [{{
+      id: 'labels',
+      afterDatasetsDraw(chart) {{
+        const ctx = chart.ctx; ctx.save(); ctx.font = '12px Pretendard, sans-serif'; ctx.fillStyle = '#343a40';
+        const right = chart.chartArea.right;
+        chart.getDatasetMeta(0).data.forEach((pt, i) => {{
+          const p = radar[i];
+          const txt = p.kw.replace(/_/g, ' ') + (p.z > 10 ? ` (z ${{p.z}})` : '');
+          const w = ctx.measureText(txt).width;
+          const x = (pt.x + p.r + 3 + w > right) ? pt.x - p.r - 3 - w : pt.x + p.r + 3;
+          ctx.fillText(txt, x, pt.y + 4);
+        }});
+        ctx.restore();
+      }}
+    }}]
   }});
+}}
+
+// 브랜드 점유 탭 차트 (탭 첫 진입 시 1회)
+let _brandDone = false;
+function renderBrandCharts() {{
+  if (_brandDone) return; _brandDone = true;
+  const b = chartData.brand || {{}};
+  const hbar = (id, d, unit) => {{
+    const el = document.getElementById(id);
+    if (!el || !d || !d.labels || !d.labels.length) return;
+    new Chart(el, {{
+      type: 'bar',
+      data: {{ labels: d.labels, datasets: [{{ data: d.data, backgroundColor: '#d6336c', borderRadius: 4 }}] }},
+      options: {{ indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                 plugins: {{ legend: {{ display: false }},
+                             tooltip: {{ callbacks: {{ label: (c) => c.raw + unit }} }} }},
+                 scales: {{ x: {{ beginAtZero: true, grid: {{ color: '#f1f3f5' }} }}, y: {{ grid: {{ display: false }} }} }} }}
+    }});
+  }};
+  hbar('shareChart', b.share, '%');
+  hbar('retailChart', b.retail, '개');
 }}
 
 // 키워드별 미니 차트 — 각 카드의 발굴 시점~최대 5주 engagement 추이
@@ -1114,7 +1286,7 @@ function renderScatter() {{
   if (!el || !pts.length) {{ _scatterDone = true; return; }}
   _scatterDone = true;
 
-  // 구분선 (x=0 리뷰유입 중립, y=0.65 VOC 긍정) 플러그인
+  // 구분선 (x=0 별점 변화 없음, y=0.65 VOC 긍정)
   const quadrantLines = {{
     id: 'quadrantLines',
     beforeDraw(chart) {{
@@ -1127,10 +1299,9 @@ function renderScatter() {{
       ctx.beginPath(); ctx.moveTo(xv, chartArea.top); ctx.lineTo(xv, chartArea.bottom); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(chartArea.left, yv); ctx.lineTo(chartArea.right, yv); ctx.stroke();
       ctx.setLineDash([]); ctx.fillStyle = '#bbb'; ctx.font = '11px sans-serif';
-      ctx.fillText('PUSH NOW',  xv + 6, chartArea.top + 14);
-      ctx.fillText('FIX & PUSH', xv + 6, chartArea.bottom - 6);
-      ctx.fillText('HOLD',    chartArea.left + 6, chartArea.top + 14);
-      ctx.fillText('MONITOR', chartArea.left + 6, chartArea.bottom - 6);
+      ctx.fillText('PUSH NOW (별점↑ · 긍정)', xv + 6, chartArea.top + 14);
+      ctx.fillText('FIX & PUSH (별점↓)', chartArea.left + 6, chartArea.top + 14);
+      ctx.fillText('부정 ≥ 0.35 → FIX · 그 외 HOLD/MONITOR', chartArea.left + 6, chartArea.bottom - 6);
       ctx.restore();
     }}
   }};
@@ -1149,11 +1320,11 @@ function renderScatter() {{
         legend: {{ display: false }},
         tooltip: {{ callbacks: {{ label: (c) => {{
           const p = pts[c.dataIndex];
-          return `${{p.brand}} · ${{p.label}} (리뷰유입 ${{p.x}}, VOC ${{p.hasVoc ? p.y : 'N/A'}})`;
+          return `${{p.brand}} · ${{p.label}} (별점 변화 ${{p.x}}, VOC ${{p.hasVoc ? p.y : 'N/A'}})`;
         }} }} }}
       }},
       scales: {{
-        x: {{ title: {{ display: true, text: '리뷰 유입 증감 →' }} }},
+        x: {{ title: {{ display: true, text: '별점 추세 (주간 변화) →' }} }},
         y: {{ min: 0, max: 1, title: {{ display: true, text: 'VOC 긍정도 →' }} }}
       }}
     }},
