@@ -179,8 +179,8 @@ class TikTokTool:
         for hashtag in self.TARGET_HASHTAGS:
             logger.info(f"TikTok 수집: #{hashtag}")
             # 비용 대비 효과: 트렌드를 처음 잡는 일반 해시태그는 많이, 브랜드 해시태그는 적게
-            n_items = (int(os.getenv("TIKTOK_GENERIC_ITEMS", "100")) if hashtag in GENERIC_HASHTAGS
-                       else int(os.getenv("TIKTOK_BRAND_ITEMS", "30")))
+            n_items = (int(os.getenv("TIKTOK_GENERIC_ITEMS", "60")) if hashtag in GENERIC_HASHTAGS
+                       else int(os.getenv("TIKTOK_BRAND_ITEMS", "10")))
             videos = self._fetch_from_apify(
                 hashtag, max_items=n_items, published_after=published_after
             )
