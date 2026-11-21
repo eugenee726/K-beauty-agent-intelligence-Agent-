@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 # ── 기회 유형 / 전략 사분면 한국어 + 색상 매핑 ──
 OPP_META = {
     # 현재 유형 (브랜드 중립 경쟁 구도)
-    "leader":      {"label": "선도 브랜드",   "color": "#6a1b9a", "bg": "#f3e5f5"},
-    "contested":   {"label": "경쟁 구도",     "color": "#1565c0", "bg": "#e3f2fd"},
-    "white_space": {"label": "화이트스페이스", "color": "#2e7d32", "bg": "#e8f5e9"},
+    "leader":      {"label": "선점",   "color": "#6a1b9a", "bg": "#f3e5f5"},
+    "contested":   {"label": "각축",   "color": "#1565c0", "bg": "#e3f2fd"},
+    "white_space": {"label": "공백",   "color": "#2e7d32", "bg": "#e8f5e9"},
     # 과거 주차(AP 관점) 데이터 표시용
     "amplify":   {"label": "즉시 강화",     "color": "#e91e8c", "bg": "#ffe0f0"},
     "position":  {"label": "차별화",        "color": "#1565c0", "bg": "#e3f2fd"},
@@ -34,9 +34,9 @@ OPP_META = {
 }
 # 기회 유형 짧은 설명 (요약 카드용)
 OPP_DESC = {
-    "leader":      "한 브랜드가 트렌드를 선점",
-    "contested":   "여러 브랜드가 경쟁",
-    "white_space": "연결 제품·브랜드 없음",
+    "leader":      "한 브랜드가 언급 과반(3건↑) → 벤치마크·차별화",
+    "contested":   "주인 없는 경쟁 → 먼저 각인시키는 쪽이 유리",
+    "white_space": "K-뷰티 브랜드 언급 없음 → 소통 공백 / 제품 공백",
     "amplify":   "(과거 기준) 자사 제품 보유 + 지속 상승",
     "position":  "(과거 기준) 자사 제품 보유 + 경쟁 동반",
     "counter":   "(과거 기준) 자사 미보유 + 경쟁 선점",
@@ -51,10 +51,10 @@ QUAD_META = {
 }
 # 전략 사분면 짧은 설명 (요약 카드용)
 QUAD_DESC = {
-    "PUSH_NOW":     "리테일 상위 + VOC 긍정 → 즉시 집행",
-    "FIX_AND_PUSH": "리테일 상위 + VOC 약함 → 개선 후 강화",
-    "HOLD":         "리테일 하위 + VOC 긍정 → 유통 확대 검토",
-    "MONITOR":      "리테일 하위 + VOC 약함 → 관망",
+    "PUSH_NOW":     "긍정 + 별점 상승 → 즉시 집행",
+    "FIX_AND_PUSH": "불만 신호(별점↓·부정↑) → 개선 후 강화",
+    "HOLD":         "긍정이나 정체 → 유지·관찰",
+    "MONITOR":      "그 외 → 관망",
 }
 # 브랜드 티어 배지 (영어 라벨)
 TIER_META = {

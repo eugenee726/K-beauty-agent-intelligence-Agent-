@@ -11,9 +11,10 @@ decision_agent.py
   Step 4. ReportBuilder        — HTML 리포트 + CSV 익스포트
 
 기회 유형 (opportunity_type) — 특정 회사 관점 없이 브랜드 경쟁 구도로 분류:
-  leader      : 연결·언급된 브랜드가 1개 → 한 브랜드가 트렌드를 선점
-  contested   : 2개 이상 브랜드가 연결·언급 → 경쟁 구도
-  white_space : 연결 제품·브랜드 언급 없음 → 아직 주인이 없는 트렌드
+  기준은 캡션에서 언급된 '알려진 브랜드'(dim_brand)의 언급 점유. 판매처·사람 이름·연결 제품 브랜드는 제외.
+  leader      : 언급 1위 브랜드 점유 ≥ 50% 그리고 ≥ 3건 → 한 브랜드가 트렌드를 선점
+  contested   : 알려진 브랜드 언급은 있으나 과반 브랜드 없음 → 경쟁 구도
+  white_space : 알려진 브랜드 언급 없음 → 연결 제품 있으면 '소통 공백', 없으면 '제품 공백'
 (이전 AP 관점 유형 amplify/position/counter/new_entry 는 과거 주차 데이터에만 남아 있다)
 
 전략 사분면 (strategy_quad):
@@ -42,6 +43,9 @@ logger = logging.getLogger(__name__)
 # 랭킹이 전 브랜드(주당 ~450개)로 늘어나 전부 대상으로 하면 리뷰 스크랩이 1.5시간+ 걸리므로,
 # LLM 이 트렌드와 연결한 제품 + 추적 브랜드 중 카테고리별 TOP_RANK 이내 제품으로 한정한다.
 TOP_RANK = 30
+# 기회 유형: 언급 1위 브랜드의 점유가 과반이고 언급이 3건 이상이면 leader (1건 = 100% 오판 방지)
+LEADER_SHARE        = 0.5
+LEADER_MIN_MENTIONS = 3
 TARGET_PRODUCTS_SQL = f"""
     SELECT product_id FROM fact_llm_insight_products WHERE week = ?
     UNION
@@ -129,6 +133,9 @@ class DecisionAgent:
             kw = row["keyword"]
             kw_to_products.setdefault(kw, []).append(dict(row))
 
+        with self._conn() as conn:
+            known_brands = self._known_brand_map(conn)
+
         saved = 0
         for insight in llm_list:
             kw = insight.get("keyword", "")
@@ -183,24 +190,20 @@ class DecisionAgent:
             except Exception:
                 mentions = {}
 
-            # 경쟁 구도: 연결 제품의 브랜드 + 캡션 언급 브랜드 (표기 차이는 slug 로 통일)
-            from tools.collect.brand_registry import slugify
-            players = list(dict.fromkeys(brand_ids + [slugify(m) for m in mentions if slugify(m)]))
-            if not players:
+            # 경쟁 구도: 캡션에서 언급된 '알려진 브랜드'(dim_brand)의 언급 점유로 판단.
+            # 연결 제품의 브랜드는 '니즈에 맞는 제품 후보'라 구도 판단에서 제외(항상 여러 브랜드가 됨).
+            # 판매처(Olive Young, YesStyle)·사람 이름 등 dim_brand 에 없는 이름도 제외.
+            shares = self._brand_shares(mentions, known_brands)
+            if not shares:
                 opp_type = "white_space"
-            elif len(players) == 1:
+            elif shares[0][1] >= LEADER_SHARE and shares[0][2] >= LEADER_MIN_MENTIONS:
                 opp_type = "leader"
             else:
                 opp_type = "contested"
-            competitors = mentions  # 아래 저장·문구 함수와의 호환용 이름
+            competitors = mentions  # 아래 저장 함수와의 호환용 이름
 
-            insight_summary = self._trend_insight_text(
-                kw, opp_type, brand_ids,
-                insight.get("consumer_need", ""),
-                insight.get("opportunity", ""),
-                competitors, sns_row,
-            )
-            action_rec = self._trend_action_text(kw, opp_type, brand_ids, insight, mom_row)
+            insight_summary = self._trend_insight_text(kw, opp_type, shares, brand_ids)
+            action_rec = self._trend_action_text(kw, opp_type, shares, brand_ids, insight, mom_row)
 
             try:
                 with self._conn() as conn:
@@ -238,41 +241,78 @@ class DecisionAgent:
         logger.info(f"TrendInsight: {saved}건 저장")
         return saved
 
-    def _trend_insight_text(
-        self, kw, opp_type, brand_ids, consumer_need, opportunity, mentions, sns_row
-    ) -> str:
-        # 브랜드 경쟁 구도만 서술 (Z·포스트 등 통계 수치, 소비자 니즈는 제외)
-        linked = ", ".join(b.upper() for b in brand_ids[:4]) if brand_ids else ""
-        named  = ", ".join(list(mentions.keys())[:4]) if mentions else ""
-        if opp_type == "leader":
-            who = linked or named
-            return f"{who}이(가) '{kw}' 트렌드를 사실상 단독으로 이끄는 중."
-        elif opp_type == "contested":
-            who = ", ".join(dict.fromkeys([x for x in (linked, named) if x]))
-            return f"여러 브랜드가 경쟁 중 — {who}."
-        else:
-            return f"연결된 K-뷰티 제품·브랜드 없음 (화이트스페이스) — {opportunity or '진입 여지 검토 필요'}."
+    @staticmethod
+    def _known_brand_map(conn) -> dict[str, str]:
+        """브랜드 비교 키(insight_checks._brand_key) → brand_id. dim_brand 의 id·영문명·aliases 기준."""
+        from tools.collect.brand_registry import load_brands
+        from tools.quality.insight_checks import _brand_key
+        out: dict[str, str] = {}
+        for b in load_brands(conn):
+            names = [b["brand_id"], b.get("brand_name_en")]
+            try:
+                names += json.loads(b.get("aliases") or "[]")
+            except (TypeError, ValueError):
+                pass
+            for n in names:
+                k = _brand_key(n)
+                if k:
+                    out[k] = b["brand_id"]
+        return out
 
-    def _trend_action_text(self, kw, opp_type, brand_ids, insight, mom_row) -> str:
-        brands = ", ".join(b.upper() for b in brand_ids[:3]) if brand_ids else ""
-        lead   = mom_row.get("lead_platform") or "TikTok"
-        opp    = insight.get("opportunity", "")
+    @staticmethod
+    def _brand_shares(mentions: dict, known_brands: dict[str, str]) -> list[tuple[str, float, int]]:
+        """언급 브랜드 중 알려진 브랜드만 모아 (brand_id, 언급 점유, 언급 건수) 내림차순."""
+        from tools.quality.insight_checks import _brand_key
+        counts: dict[str, int] = {}
+        for name, n in mentions.items():
+            bid = known_brands.get(_brand_key(name))
+            if not bid:
+                continue
+            try:
+                n = max(int(n), 1)
+            except (TypeError, ValueError):
+                n = 1
+            counts[bid] = counts.get(bid, 0) + n
+        total = sum(counts.values())
+        return sorted(((b, c / total, c) for b, c in counts.items()), key=lambda x: -x[1]) if total else []
 
+    # 기회 유형별 의미 (마케터 관점)
+    #   leader      : 한 브랜드가 이 니즈의 대화를 차지 → 주인공이면 강화, 아니면 벤치마크·차별화
+    #   contested   : 주인 없는 각축 → 먼저 "이 니즈 = 우리 브랜드"를 만드는 쪽이 유리 (콘텐츠·시딩)
+    #   white_space : 대화에 K-뷰티 브랜드 없음
+    #       ↳ 소통 공백: 맞는 K-뷰티 제품은 있음(연결 제품 존재) → 메시지·콘텐츠로 빠르게 공략
+    #       ↳ 제품 공백: 맞는 제품 없음 → 신제품·소싱 검토
+    def _trend_insight_text(self, kw, opp_type, shares, brand_ids) -> str:
+        who = ", ".join(f"{b.upper()} {s:.0%}" for b, s, _ in shares[:4])
         if opp_type == "leader":
-            return (
-                f"선도 브랜드{f'({brands})' if brands else ''}의 '{kw}' 제품 구성과 {lead} 콘텐츠를 벤치마크. "
-                "후발 진입 시 차별 편익이 필요."
-            )
+            b, s, n = shares[0]
+            return f"{b.upper()}이(가) '{kw}' 브랜드 언급의 {s:.0%}({n}건)를 차지 — 선점."
         elif opp_type == "contested":
-            return (
-                f"브랜드별 언급량·랭킹을 비교해 우위 브랜드 확인. "
-                f"'{kw}' 수요 안에서 비어 있는 세부 니즈(제형·가격대·피부 타입) 탐색."
-            )
+            return f"주인 없는 각축 — 언급 점유 {who}."
+        elif brand_ids:
+            return (f"소통 공백 — 대화에 K-뷰티 브랜드는 없지만 맞는 제품은 있음 "
+                    f"({', '.join(x.upper() for x in brand_ids[:4])}).")
         else:
-            return (
-                f"'{kw}' 트렌드에 대응하는 K-뷰티 제품이 아직 없음 — 신제품·라인 확장 기회. "
-                + (f"기회: {opp}." if opp else "")
-            )
+            return "제품 공백 — 대화에 K-뷰티 브랜드도, 맞는 제품도 없음."
+
+    def _trend_action_text(self, kw, opp_type, shares, brand_ids, insight, mom_row) -> str:
+        lead = mom_row.get("lead_platform") or "TikTok"
+        opp  = insight.get("opportunity", "")
+        if opp_type == "leader":
+            b = shares[0][0].upper()
+            return (f"{b}: 효과가 확인된 트렌드 → 광고·재고 강화. "
+                    f"그 외 브랜드: {b}의 대표 제품과 {lead} 콘텐츠를 벤치마크하고, 정면 승부 대신 "
+                    "제형·가격·피부 타입으로 차별화.")
+        elif opp_type == "contested":
+            return (f"아직 주인이 없음 → '{kw}' = 우리 브랜드를 먼저 각인시키는 쪽이 유리. "
+                    "크리에이터 시딩·콘텐츠 집중, VOC·랭킹으로 우위 근거 확보.")
+        elif brand_ids:
+            return (f"맞는 제품을 가진 브랜드({', '.join(x.upper() for x in brand_ids[:3])})는 "
+                    f"'{kw}' 메시지로 콘텐츠·상세페이지를 재정비 — 빠르고 저비용 공략."
+                    + (f" 기회: {opp}." if opp else ""))
+        else:
+            return (f"'{kw}' 니즈에 맞는 K-뷰티 제품이 없음 → 신제품·소싱 검토 신호."
+                    + (f" 기회: {opp}." if opp else ""))
 
     # ─────────────────────────────────────────────────────────
     # Step 2. ProductInsightBuilder
