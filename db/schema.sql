@@ -352,3 +352,17 @@ CREATE TABLE IF NOT EXISTS mem_agent_runs (
 
     created_at    TEXT DEFAULT (datetime('now'))
 );
+
+-- 트렌드 2차 수집 (해석용 캡션 표본 보강, z-score·KPI 에는 사용하지 않음)
+CREATE TABLE IF NOT EXISTS fact_sns_deep (
+    week          TEXT NOT NULL,
+    keyword       TEXT NOT NULL,
+    platform_id   TEXT NOT NULL,
+    post_id       TEXT NOT NULL,
+    content_text  TEXT,
+    hashtags      TEXT,
+    view_count    INTEGER DEFAULT 0,
+    like_count    INTEGER DEFAULT 0,
+    collected_at  TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (week, keyword, platform_id, post_id)
+);

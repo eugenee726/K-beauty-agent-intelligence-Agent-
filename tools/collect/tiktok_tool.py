@@ -14,6 +14,7 @@ Apify 기반 TikTok K-beauty 트렌드 수집 툴.
 """
 
 import json
+import os
 import re
 import sqlite3
 import logging
@@ -22,7 +23,7 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from tools.collect.sns_terms import kbeauty_terms, target_hashtags
+from tools.collect.sns_terms import GENERIC_HASHTAGS, kbeauty_terms, target_hashtags
 
 logger = logging.getLogger(__name__)
 
@@ -177,8 +178,11 @@ class TikTokTool:
         skipped_lang = 0
         for hashtag in self.TARGET_HASHTAGS:
             logger.info(f"TikTok 수집: #{hashtag}")
+            # 비용 대비 효과: 트렌드를 처음 잡는 일반 해시태그는 많이, 브랜드 해시태그는 적게
+            n_items = (int(os.getenv("TIKTOK_GENERIC_ITEMS", "100")) if hashtag in GENERIC_HASHTAGS
+                       else int(os.getenv("TIKTOK_BRAND_ITEMS", "30")))
             videos = self._fetch_from_apify(
-                hashtag, max_items=40, published_after=published_after
+                hashtag, max_items=n_items, published_after=published_after
             )
             logger.info(f"  #{hashtag}: {len(videos)}개 영상 수집")
 

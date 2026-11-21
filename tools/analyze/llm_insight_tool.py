@@ -44,19 +44,23 @@ def sample_captions(conn: sqlite3.Connection, keyword: str, week: str,
     """
     kw_plain = keyword.replace("_", " ").lower()
     low = keyword.lower()
-    rows = conn.execute("""
-        SELECT content_text
-        FROM fact_sns_raw
-        WHERE week = ?
-          AND TRIM(COALESCE(content_text, '')) != ''
-          AND (
-              LOWER(content_text) LIKE ?
-              OR LOWER(content_text) LIKE ?
-              OR LOWER(hashtags)     LIKE ?
-          )
-        ORDER BY view_count DESC
-        LIMIT ?
-    """, (week, f"%{low}%", f"%{kw_plain}%", f"%{low}%", limit)).fetchall()
+    like = (f"%{low}%", f"%{kw_plain}%", f"%{low}%")
+    cond = """TRIM(COALESCE(content_text, '')) != ''
+              AND (LOWER(content_text) LIKE ? OR LOWER(content_text) LIKE ? OR LOWER(hashtags) LIKE ?)"""
+    has_deep = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fact_sns_deep'").fetchone()
+    if not has_deep:
+        rows = conn.execute(f"""SELECT content_text FROM fact_sns_raw WHERE week = ? AND {cond}
+                                ORDER BY view_count DESC LIMIT ?""", (week, *like, limit)).fetchall()
+        return [r[0] for r in rows]
+    # 트렌드 2차 수집분(fact_sns_deep)까지 합쳐 조회수 상위 — 같은 게시물은 한 번만
+    rows = conn.execute(f"""
+        SELECT content_text FROM (
+            SELECT post_id, content_text, view_count FROM fact_sns_raw WHERE week = ? AND {cond}
+            UNION ALL
+            SELECT post_id, content_text, view_count FROM fact_sns_deep WHERE week = ? AND keyword = ? AND {cond}
+        ) GROUP BY post_id ORDER BY MAX(view_count) DESC LIMIT ?""",
+        (week, *like, week, keyword, *like, limit)).fetchall()
     return [r[0] for r in rows]
 
 

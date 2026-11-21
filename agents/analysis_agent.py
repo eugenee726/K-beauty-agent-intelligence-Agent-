@@ -21,6 +21,7 @@ analysis_agent.py
 """
 
 import logging
+import os
 
 import pandas as pd
 
@@ -266,6 +267,15 @@ class AnalysisAgent:
                     {"keyword": row["keyword"], "z_score": float(row["z_score"])}
                     for _, row in candidates.iterrows()
                 ]
+
+                # 트렌드 2차 수집: 해석용 캡션 표본 보강 (z-score·KPI 에는 섞지 않음, 과거 주차 재분석 때는 생략)
+                if llm_keyword_list and self.week == self.memory.get_current_week()                         and os.getenv("DEEP_COLLECT", "1") != "0":
+                    try:
+                        from tools.collect.deep_collect import TrendDeepCollector
+                        TrendDeepCollector(self.memory.db_path).collect(
+                            [k["keyword"] for k in llm_keyword_list], self.week)
+                    except Exception as e:
+                        logger.warning(f"트렌드 2차 수집 실패 (1차 데이터로 계속): {e}")
 
                 if llm_keyword_list:
                     llm_insights = self.llm.analyze(llm_keyword_list, self.week)
