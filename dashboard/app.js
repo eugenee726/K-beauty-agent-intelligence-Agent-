@@ -11,7 +11,7 @@
     LOW_SAMPLE_POSTS:   { v: 10,  label: '표본 부족', desc: '이번 주 게시물이 이 값보다 적으면 관찰 중' },
     MIN_CONSEC_WEEKS:   { v: 3,   label: '이력 짧음', desc: '이번 주까지 끊김 없이 이어진 ISO 주차 수가 이 값보다 적으면 관찰 중 (예: W45→W47은 W46이 없어 끊김)' },
     BIG_JUMP_RATIO:     { v: 10,  label: '급등 의심', desc: '직전 데이터 주차 대비 engagement가 이 배수 이상이면 관찰 중. 주차별 게시물 수가 데이터에 없어 게시물당 값 대신 총량으로 비교하고, 게시물 수를 함께 표시' },
-    MIN_MENTIONS:       { v: 5,   label: '판단 보류', desc: '트렌드 캡션의 K-브랜드 언급 합계가 이 값보다 적으면 대화 점유(선점·각축·공백)를 판단하지 않음' },
+    MIN_MENTIONS:       { v: 5,   label: '판단 보류', desc: '트렌드 캡션 전체에서 센 브랜드 언급 합계가 이 값보다 적으면 대화 점유(선점·각축·공백)를 판단하지 않음' },
     SURGE_Z:            { v: 2.0, label: '급등', desc: 'z-score가 이 값 이상이면 급등, 미만이면 완만한 상승으로 집계 (파이프라인 Z_ALERT와 같은 값)' },
     SUSTAIN_MOMENTUM:   { v: 1.5, label: '지속 기준선', desc: '레이더 가로 구분선. 파이프라인의 지속 상승 모멘텀 기준과 같은 값' },
     RADAR_X_MAX:        { v: 50,  label: '레이더 가로 상한', desc: '모멘텀이 이 배수를 넘으면 축 끝에 두고 실제 값을 라벨로 표시' },
@@ -32,7 +32,7 @@
   const WEEKS = D.weeks;
   const WEEK = Object.fromEntries(WEEKS.map(w => [w.week, w]));
   const MONTHS = [...new Set(WEEKS.map(w => w.month))];
-  const PAGES = { overview: '개요', trends: '트렌드', brands: '브랜드', products: '제품·VOC', inbound: '방한 추천', quality: '검증·품질', method: '방법론' };
+  const PAGES = { overview: '개요', trends: '트렌드', brands: '브랜드', products: '제품 전략', inbound: '방한 추천', quality: '검증·품질', method: '방법론' };
 
   // ── 표기 ──
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -87,8 +87,10 @@
     if (t.top_post_share !== null && t.top_post_share !== undefined && t.top_post_share >= RULES.VIRAL_SHARE.v)
       reasons.push(`단일 게시물 의존: 조회수의 ${pct(t.top_post_share)}가 게시물 1개`);
     const m = mentionsOf(w, t.kw);
-    const state = m.total < RULES.MIN_MENTIONS.v ? 'hold' : reasons.length ? 'watch' : 'ok';
-    if (state === 'hold') reasons.unshift(`판단 보류: K-브랜드 언급 ${m.total}건 (< ${RULES.MIN_MENTIONS.v})`);
+    // 판단 보류는 대화 점유 판정과 같은 집계(결정적, 없으면 LLM)의 언급 수로 본다
+    const nMention = t.det && t.det.total !== undefined ? t.det.total : m.total;
+    const state = nMention < RULES.MIN_MENTIONS.v ? 'hold' : reasons.length ? 'watch' : 'ok';
+    if (state === 'hold') reasons.unshift(`판단 보류: K-브랜드 언급 ${nMention}건 (< ${RULES.MIN_MENTIONS.v})`);
     const base = t.hist.length >= 3 ? t.hist[t.hist.length - 3][0] : null;
     return { state, reasons, mentions: m, base };
   }
@@ -110,16 +112,28 @@
   }
   const shareNote = sh => sh.total ? `언급 ${sh.total}건${sh.captions !== null ? ` · 캡션 ${sh.captions}건` : ''} · 1위 95% 범위 ${pct(sh.ci[0])}~${pct(sh.ci[1])}` : '언급 없음';
   const FAIL_TYPE = { direct_quote: '인용 불일치', brand_count: '언급 수 불일치', indirect_reason: '근거 부족', korean_need: '형식 오류',
-                      llm_product: '제품 연결 오류', llm_brand: '브랜드 오인', llm_need: '니즈 해석 문제', llm_opportunity: '기회 해석 문제' };
+                      llm_product: '제품 연결 오류', llm_brand: '브랜드 아님', llm_need: '니즈 해석 문제', llm_opportunity: '기회 해석 문제',
+                      absent_brand: '캡션에 없는 브랜드' };
+  // 브랜드 관련 실패를 두 종류로 나눈다: 캡션에 아예 없는 브랜드를 셈(absent) / 판매처·매체·가수 등 브랜드가 아닌 것을 셈(llm_brand)
+  const bcount = f => { const m = /(\d+)건 중 '.*?' 등장 (\d+)건 \(LLM 주장 (.+?)\)/.exec(f.detail || ''); return m ? { n: +m[1], hit: +m[2], claim: m[3] } : null; };
+  const NOT_BRAND_RE = /아닙니다|아니다|아님|아니며|not a (beauty )?brand|판매처|소매|플랫폼|매체|그룹|서비스|retailer|media/i;
+  function failKey(f) {
+    if (f.check_type === 'llm_brand') return NOT_BRAND_RE.test(f.detail || '') ? 'llm_brand' : 'absent_brand';
+    if (f.check_type === 'brand_count') { const c = bcount(f); return c && c.hit === 0 ? 'absent_brand' : 'brand_count'; }
+    return f.check_type;
+  }
+  const bname = b => (D.brand_names && (D.brand_names[b] || D.brand_names[String(b).toLowerCase().replace(/\s+/g, '_')])) || b;
   function failPlain(f) {
-    const who = f.target_name || f.target;
-    if (f.check_type === 'brand_count') { const m = /(\d+)건 중 '.*?' 등장 (\d+)건 \(LLM 주장 (.+?)\)/.exec(f.detail || '');
-      return m ? `LLM은 '${f.target}'이(가) ${m[3]}번 나온다고 했지만, 실제 캡션 ${m[1]}건에는 ${m[2]}번` : `언급 수가 실제 캡션과 다름 — ${f.detail}`; }
+    const who = f.target_name || f.target, k = failKey(f);
+    if (k === 'absent_brand') { const c = bcount(f);
+      return `LLM이 '${bname(f.target)}'을(를) 언급 브랜드로 셌지만${c ? `(${c.claim}건)` : ''}, LLM이 읽은 캡션 ${c ? c.n : 30}건 어디에도 없음. 근거 없는 언급`; }
+    if (f.check_type === 'brand_count') { const c = bcount(f);
+      return c ? `LLM은 '${bname(f.target)}'이(가) ${c.claim}번 나온다고 했지만, 실제 캡션 ${c.n}건에는 ${c.hit}번` : `언급 수가 실제 캡션과 다름 — ${f.detail}`; }
     if (f.check_type === 'direct_quote') return `근거로 든 인용문이 실제 캡션에 없음 (${who} 연결 근거). 여러 캡션을 이어 붙였거나 바꿔 쓴 문장`;
     if (f.check_type === 'indirect_reason') return `${who} 간접 연결의 근거 문장이 비어 있거나 너무 짧음`;
     if (f.check_type === 'korean_need') return '소비자 니즈가 한국어로 작성되지 않음';
     if (f.check_type === 'llm_product') return `'${who}' 연결이 캡션 근거와 맞지 않음 — ${f.detail}`;
-    if (f.check_type === 'llm_brand') return `'${f.target}'은(는) 뷰티 브랜드로 보기 어려움 — ${f.detail}`;
+    if (f.check_type === 'llm_brand') return `'${f.target}'은(는) 판매처·매체·사람 등으로 화장품 브랜드가 아님 — ${f.detail}`;
     return f.detail || '';
   }
   const failsOf = (w, kw) => w.fails.filter(f => f.keyword === kw);
@@ -291,8 +305,10 @@
     const oppKey = x => x.tr.state === 'hold' ? 'hold' : x.t.opp;
     const counts = {}; items.forEach(x => counts[oppKey(x)] = (counts[oppKey(x)] || 0) + 1);
     const types = w.legacy ? Object.keys(counts) : ['leader', 'contested', 'white_space', 'hold'];
-    const desc = { leader: '1위 브랜드 언급 과반(3건↑) → 벤치마크·차별화', contested: '주인 없는 경쟁 → 먼저 각인시키는 쪽이 유리',
-                   white_space: 'K-브랜드 언급 없음 → 소통 공백 / 제품 공백', hold: `K-브랜드 언급 ${RULES.MIN_MENTIONS.v}건 미만 → 점유 판단 안 함` };
+    const desc = { leader: '한 브랜드가 이 대화의 절반 이상을 차지합니다. 그 브랜드의 메시지와 제품을 기준으로 삼고, 우리가 다르게 말할 지점을 찾을 때 봅니다.',
+                   contested: '여러 브랜드가 대화를 나눠 갖고 있고 대표 브랜드는 아직 없습니다. 먼저 이 니즈의 대표 제품으로 자리 잡으면 유리합니다.',
+                   white_space: '소비자 관심은 있는데 K-브랜드 이야기가 없습니다. 맞는 제품이 있으면 알리는 것부터, 없으면 제품 기획을 검토합니다.',
+                   hold: `브랜드 언급이 ${RULES.MIN_MENTIONS.v}건 미만이라 누가 이 대화를 차지했는지 아직 말할 수 없습니다. 다음 주 수집 후 다시 봅니다.` };
     const label = o => o === 'hold' ? '판단 보류' : (META.opp[o] || {}).label || o;
     const norm = t => String(t.action).split(t.kw).join('{kw}');
     const freq = {}; w.trends.forEach(t => freq[norm(t)] = (freq[norm(t)] || 0) + 1);
@@ -302,8 +318,9 @@
       <div class="grid4" style="margin-bottom:16px">${types.map(o => `<div class="stat ${oppFilter === o ? 'on' : ''}" data-opp="${o}" data-track="opp_filter">
         <div class="n">${counts[o] || 0}</div><div class="t">${esc(label(o))}</div><div class="d">${desc[o] || '이전 기준(AP 관점) 유형'}</div></div>`).join('')}</div>
       ${card('트렌드 레이더', `가로 = 모멘텀(최근 3개 데이터 주차 성장 배수, 로그, ${RULES.RADAR_X_MAX.v}배 상한) · 세로 = z-score(${RULES.RADAR_Y_MAX.v} 상한) · 크기 = 게시물 수 · 속 빈 원 = 관찰 중/판단 보류. 구분선: 모멘텀 ${RULES.SUSTAIN_MOMENTUM.v}배, z ${RULES.SURGE_Z.v}`,
-        items.length ? `<div style="position:relative;height:340px"><canvas id="radar"></canvas></div><ol class="radar-legend">${items.map(x =>
-          `<li data-i="${x.i}"><b>${x.i + 1}</b> ${esc(kwName(x.t.kw))} <span class="muted">z ${zf(x.t.z)} · ${momf(x.t.mom)}</span></li>`).join('')}</ol>` : empty('트렌드 없음'))}
+        (oppFilter !== 'ALL' ? `<div class="legend-line">${esc(label(oppFilter))} 트렌드만 표시 중 · 위 카드를 다시 누르면 전체</div>` : '') +
+        (shown.length ? `<div style="position:relative;height:340px"><canvas id="radar"></canvas></div><ol class="radar-legend">${shown.map(x =>
+          `<li data-i="${x.i}"><b>${x.i + 1}</b> ${esc(kwName(x.t.kw))} <span class="muted">z ${zf(x.t.z)} · ${momf(x.t.mom)}</span></li>`).join('')}</ol>` : empty(items.length ? '이 유형에 해당하는 트렌드 없음' : '트렌드 없음')))}
       ${shown.map(x => trendCard(w, x.t, x.i, dup)).join('')}`;
     return [html, () => {
       document.querySelectorAll('.stat[data-opp]').forEach(el => el.onclick = () => { oppFilter = oppFilter === el.dataset.opp ? 'ALL' : el.dataset.opp; render(); });
@@ -326,16 +343,17 @@
       });
       // 레이더
       // 세로축은 이번 주 z 범위에 맞추되, 급등 기준선(z 2)은 항상 보이게
-      const zs = items.map(x => Math.min(x.t.z, RULES.RADAR_Y_MAX.v));
+      if (!shown.length) return;
+      const zs = shown.map(x => Math.min(x.t.z, RULES.RADAR_Y_MAX.v));
       const yMin = Math.min(-1, Math.floor(Math.min(...zs)) - 0.5), yMax = Math.max(RULES.SURGE_Z.v + 1, Math.min(RULES.RADAR_Y_MAX.v + 1, Math.ceil(Math.max(...zs)) + 1));
-      const pts = items.map(x => ({ x: Math.min(Math.max(x.t.mom, 0.5), RULES.RADAR_X_MAX.v), y: Math.max(Math.min(x.t.z, RULES.RADAR_Y_MAX.v), yMin),
+      const pts = shown.map(x => ({ x: Math.min(Math.max(x.t.mom, 0.5), RULES.RADAR_X_MAX.v), y: Math.max(Math.min(x.t.z, RULES.RADAR_Y_MAX.v), yMin),
                                     r: 6 + Math.sqrt(Math.min(x.t.posts, 60)) * 1.1, x0: x }));
       chart(document.getElementById('radar'), { type: 'bubble',
         data: { datasets: [{ data: pts, backgroundColor: pts.map(p => p.x0.tr.state === 'ok' ? DARK + 'cc' : 'rgba(0,0,0,0)'),
           borderColor: DARK, borderWidth: 1.5, clip: false }] },
         options: { responsive: true, maintainAspectRatio: false, layout: { padding: { right: 28, top: 14 } },
           plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => { const x = c.raw.x0;
-            return `${c.dataIndex + 1}. ${kwName(x.t.kw)} · ${shapeView(x.t).label} · z ${zf(x.t.z)} · 모멘텀 ${momf(x.t.mom)} · 게시물 ${x.t.posts} · ${TRUST[x.tr.state].label}`; } } } },
+            return `${x.i + 1}. ${kwName(x.t.kw)} · ${shapeView(x.t).label} · z ${zf(x.t.z)} · 모멘텀 ${momf(x.t.mom)} · 게시물 ${x.t.posts} · ${TRUST[x.tr.state].label}`; } } } },
           onClick: (e, els) => { if (els.length) focus(pts[els[0].index].x0.i); },
           scales: { x: { type: 'logarithmic', min: 0.5, max: RULES.RADAR_X_MAX.v, title: { display: true, text: '모멘텀 (배, 로그)' } },
                     y: { min: yMin, max: yMax, title: { display: true, text: 'z-score (게시물 비중)' } } } },
@@ -380,7 +398,7 @@
       `<button data-src="${v}" class="${brandSrc === v ? 'on' : ''}" data-track="brand_source">${l}</button>`).join('')}</div>`;
     const srcHint = brandSrc === 'det'
       ? `키워드가 들어간 캡션 전체에서 등록 브랜드 이름을 직접 셈(캡션당 1회, 오탐 단어 제외). 총 언급 ${sum(totals.map(t => t[1]))}건. 트렌드별 ${RULES.SHARE_TARGET_N.v}건 미만이면 점유는 참고용입니다.`
-      : `LLM이 캡션 샘플(최대 30건)에서 센 브랜드. 판매처·사람 이름·서구 브랜드 제외. 파이프라인의 기회 유형 판정이 이 값을 씁니다.`;
+      : `LLM이 캡션 샘플(최대 30건)에서 센 브랜드. 비교·검증용으로만 보여 주며, 기회 유형 판정에는 결정적 집계를 씁니다(LLM이 캡션에 없는 브랜드를 세는 경우가 있어서).`;
     const html = `
       ${srcSeg}
       ${card('트렌드별 브랜드 언급', `${srcHint}${mode === 'month' ? ' 월 합계, 언급 많은 트렌드 10개.' : ''}`, heat)}
@@ -402,14 +420,17 @@
     }];
   }
 
-  // ── 페이지: 제품·VOC ──
+  // ── 페이지: 제품 전략 ──
   const QUAD_ORDER = ['PUSH_NOW', 'FIX_AND_PUSH', 'MONITOR', 'HOLD'];
   let quadFilter = 'ALL', prodSearch = '', openGroups = new Set(['PUSH_NOW', 'FIX_AND_PUSH', 'MONITOR']);
   function pageProducts(mode, k) {
     const ws = periodWeeks(mode, k), w = ws[ws.length - 1], ps = w.products;
     if (!ps.length) return [snapNote(mode, ws) + empty('제품 인사이트 없음'), null];
     const counts = {}; ps.forEach(p => counts[p.quad] = (counts[p.quad] || 0) + 1);
-    const qdesc = { PUSH_NOW: '긍정 + 별점 상승 → 즉시 집행', FIX_AND_PUSH: '불만 신호(별점↓·부정↑) → 개선 후 강화', HOLD: '긍정이나 정체 → 유지·관찰', MONITOR: '그 외 → 관망' };
+    const qdesc = { PUSH_NOW: '리뷰 반응(또는 랭킹)이 좋고 별점도 오르는 중입니다. 지금 광고·프로모션을 늘리기 좋은 제품입니다.',
+                    FIX_AND_PUSH: '별점이 내려가거나 불만 리뷰가 늘고 있습니다. 불만 포인트를 먼저 고치거나 설명한 뒤 밀어야 합니다.',
+                    HOLD: '반응은 좋지만 변화가 없습니다. 지금 수준을 유지하며 지켜봅니다.',
+                    MONITOR: '리뷰 긍정 비율이 기준(65%)에 못 미치지만 나빠지는 신호도 없습니다. 지켜봅니다.' };
     const match = p => (quadFilter === 'ALL' || p.quad === quadFilter) && (!prodSearch || `${p.name} ${p.brand}`.toLowerCase().includes(prodSearch));
     const trend = v => v === null || v === undefined ? '<span class="muted">—</span>' : v > 0 ? `▲ ${v.toFixed(2)}` : v < 0 ? `▼ ${v.toFixed(2)}` : '±0';
     const groups = QUAD_ORDER.map(q => { const rows = ps.filter(p => p.quad === q && match(p));
@@ -444,10 +465,10 @@
       document.querySelectorAll('.grp-btn').forEach(b => b.onclick = () => { const g = b.dataset.group; openGroups.has(g) ? openGroups.delete(g) : openGroups.add(g); render(); });
       const inp = document.getElementById('psearch');
       inp.oninput = () => { prodSearch = inp.value.toLowerCase().trim(); render(); const n = document.getElementById('psearch'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
-      const xs = ps.filter(p => p.rt !== null && p.rt !== undefined).map(p => p.rt);
+      const xs = ps.filter(match).filter(p => p.rt !== null && p.rt !== undefined).map(p => p.rt);
       const lo = Math.min(0, ...xs), hi = Math.max(0, ...xs), span = Math.max(hi - lo, 0.02);
       const bandX = lo - span * 0.22, edge = lo - span * 0.1, xmin = lo - span * 0.34;
-      const pts = ps.map((p, i) => ({ x: p.rt === null || p.rt === undefined ? bandX + ((i % 7) - 3) * span * 0.012 : p.rt, y: p.pos ?? 0, p }));
+      const pts = ps.filter(match).map((p, i) => ({ x: p.rt === null || p.rt === undefined ? bandX + ((i % 7) - 3) * span * 0.012 : p.rt, y: p.pos ?? 0, p }));
       const deco = { id: 'deco', beforeDatasetsDraw(c) { const { ctx, chartArea: a, scales: s } = c;
         const xe = s.x.getPixelForValue(edge), x0 = s.x.getPixelForValue(0), y0 = s.y.getPixelForValue(0.65);
         ctx.save(); ctx.fillStyle = '#f1f3f5'; ctx.fillRect(a.left, a.top, xe - a.left, a.bottom - a.top);
@@ -490,6 +511,15 @@
     const pname = { tiktok: 'TikTok 게시물', youtube: 'YouTube 영상', oy_top_orders: 'OY Global 주문 랭킹', oy_top_korea: 'OY 한국 인기 랭킹', sephora_us: 'Sephora US' };
     const vw = WEEKS.filter(w => w.validation.rule || w.validation.llm);
     const fails = ws.flatMap(w => w.fails.map(f => ({ ...f, week: w.week })));
+    // 규칙과 LLM이 같은 오류(같은 주·키워드·유형·대상)를 둘 다 잡으면 한 줄로 묶는다
+    const grouped = []; const gidx = {};
+    fails.forEach(f => { const k = failKey(f), key = [f.week, f.keyword, k, String(f.target).toLowerCase().replace(/[\s_]+/g, '')].join('|');
+      if (gidx[key] !== undefined) { const g = grouped[gidx[key]]; g.by.add(f.checker === 'rule' ? '규칙' : 'LLM'); g.raw.push(f); if (f.checker === 'rule') g.f = f; return; }
+      gidx[key] = grouped.length; grouped.push({ f, k, by: new Set([f.checker === 'rule' ? '규칙' : 'LLM']), raw: [f] }); });
+    const byKind = {}; grouped.forEach(g => byKind[g.k] = (byKind[g.k] || 0) + 1);
+    const KIND_HELP = { absent_brand: 'LLM이 캡션에 없는 브랜드를 언급 브랜드로 셈(카탈로그 등 입력의 다른 정보를 끌어옴)',
+                        llm_brand: '판매처(Sephora·Amazon)·매체(Vogue)·가수(ATEEZ)를 브랜드로 셈', brand_count: '브랜드는 맞지만 언급 횟수를 부풀림',
+                        direct_quote: '근거 인용문이 캡션 원문과 다름', llm_product: '다른 브랜드 제품 캡션을 근거로 연결' };
     return [`
       <div class="kpis">
         <div class="kpi"><div class="label">규칙 검사 통과율</div><div class="val">${pct(v.ruleRate)}</div><div class="delta">인용·브랜드 수·한국어 (비용 0)</div></div>
@@ -511,10 +541,12 @@
         <li><b>데이터 품질</b> — 플랫폼별 수집 건수와 빈 본문 비율. 기준에 못 미치면 LLM 단계를 돌리지 않습니다.</li>
         <li><b>규칙 검사</b> — LLM이 인용한 문장이 실제 캡션에 있는지, 언급 브랜드 수가 맞는지, 니즈가 한국어인지 대조합니다.</li>
         <li><b>LLM 판정</b> — 생성 모델(Sonnet)과 다른 모델(Opus)이 같은 캡션을 보고 주장마다 지지 / 근거 부족 / 모순으로 판정합니다.</li></ol>`)}
-      ${card(`검토 필요 ${fails.length}건`, '자동 검증 실패 항목. <b>규칙</b> = 코드가 원문과 문자열로 대조해 찾은 오류(인용 위조, 언급 수 과장) · <b>LLM</b> = 다른 모델(Opus)이 뜻을 따져 찾은 오류(판매처·사람을 브랜드로 셈, 다른 제품을 근거로 연결). 원문 사유는 설명에 마우스를 올리면 보입니다.',
-        fails.length ? `<div class="tbl-wrap"><table><thead><tr><th>주차</th><th>키워드</th><th>판정</th><th>유형</th><th>무엇이 틀렸나</th></tr></thead><tbody>
-        ${fails.map(f => `<tr><td>${f.week.slice(5)}</td><td><b>${esc(kwName(f.keyword))}</b></td><td>${f.checker === 'rule' ? '규칙' : 'LLM'}</td>
-          <td>${tag(esc(FAIL_TYPE[f.check_type] || f.check_type), 'review')}</td><td title="${esc(`[${f.check_type}] ${f.target}: ${f.detail}`)}">${esc(failPlain(f))}</td></tr>`).join('')}
+      ${card(`검토 필요 ${fails.length}건 · 서로 다른 오류 ${grouped.length}개`, '인사이트를 쓴 모델(Sonnet)의 출력을 자동 검증해 걸린 항목입니다. <b>규칙</b> = 코드가 캡션 원문과 문자열로 대조 · <b>LLM</b> = 다른 모델(Opus)이 같은 캡션을 읽고 판정. 둘 다 잡은 오류는 한 줄로 묶었습니다. 원문 사유는 설명에 마우스를 올리면 보입니다.',
+        fails.length ? `<div class="fail-sum">${Object.entries(byKind).sort((a, b) => b[1] - a[1]).map(([k, n]) =>
+          `<div><span class="tag review">${esc(FAIL_TYPE[k] || k)}</span> <b>${n}</b> <span class="muted small">${esc(KIND_HELP[k] || '')}</span></div>`).join('')}</div>
+        <div class="tbl-wrap"><table><thead><tr><th>주차</th><th>키워드</th><th>잡은 쪽</th><th>유형</th><th>무엇이 틀렸나</th></tr></thead><tbody>
+        ${grouped.map(({ f, k, by, raw }) => `<tr><td>${f.week.slice(5)}</td><td><b>${esc(kwName(f.keyword))}</b></td><td>${[...by].join(' + ')}</td>
+          <td>${tag(esc(FAIL_TYPE[k] || k), 'review')}</td><td title="${esc(raw.map(x => `[${x.checker === 'rule' ? '규칙' : 'LLM'}] ${x.target}: ${x.detail}`).join('\n'))}">${esc(failPlain(f))}</td></tr>`).join('')}
         </tbody></table></div>` : empty('없음'))}`, () => {
       if (!vw.length) return;
       const r = w => { const x = valid([w]); return [x.ruleRate, x.llmRate].map(y => y === null ? null : +(y * 100).toFixed(1)); };
@@ -538,7 +570,7 @@
         <p><code>z-score</code> 키워드 <b>게시물 비중</b>(그 주 전체 게시물 대비)의 z. (이번 주 − 과거 주차 평균) ÷ 표준편차, 과거 3개 데이터 주차 이상일 때 계산. 총량 대신 비중을 써서 수집량이 바뀌어도 비교되고, 게시물 수 기반이라 바이럴 영상 하나에 흔들리지 않습니다. engagement 비중 z는 카드 상세에 참고로 표시합니다.</p>
         <p><code>모멘텀</code> 키워드 <b>engagement 비중</b>의 이번 주 ÷ 데이터가 있는 3번째 전 주차 (카드의 '비교 기준'이 이 주차)</p>
         <p>후보 = 순간 급등(z ≥ 2.0) ∪ 지속 상승(3개 데이터 주차 연속 상승 + 모멘텀 ≥ 1.5) → 광의어·브랜드명 제외 → 게시물 ≥ 5, 캡션 ≥ 3 → 최대 10개</p>`)}
-      ${card('대화 점유 (기회 유형)', '', `<p>캡션 속 K-뷰티 브랜드 언급 기준(판매처·사람 이름·서구 브랜드 제외). <b>선점</b> 1위 브랜드 ≥ 50% 그리고 ≥ 3건 · <b>각축</b> 과반 브랜드 없음 · <b>공백</b> K-브랜드 언급 없음(맞는 제품이 있으면 소통 공백, 없으면 제품 공백)</p>`)}
+      ${card('대화 점유 (기회 유형)', '', `<p>트렌드 키워드가 들어간 캡션 전체(탐지용 + 심층 수집)에서 코드로 센 등록 브랜드 언급 기준(캡션당 1회, 판매처·사람 이름은 등록 브랜드가 아니라 자연히 빠짐). LLM이 센 브랜드 수는 쓰지 않습니다. <b>선점</b> 1위 브랜드 ≥ 50% 그리고 ≥ 3건 · <b>각축</b> 과반 브랜드 없음 · <b>공백</b> K-브랜드 언급 없음(맞는 제품이 있으면 소통 공백, 없으면 제품 공백)</p>`)}
       ${card('화면 표시 규칙', '파이프라인 판정은 바꾸지 않고, 대시보드가 data.js 값으로만 계산하는 표시 규칙입니다. 아래 값은 dashboard/app.js의 RULES 상수를 그대로 읽어 표시합니다.',
         `<div class="tbl-wrap"><table><thead><tr><th>상수</th><th>표시</th><th class="num">기준값</th><th>설명</th></tr></thead><tbody>${rules}</tbody></table></div>
         <p><b>신뢰 배지</b> 판단 보류(회색) = MIN_MENTIONS 미달 · 관찰 중(주황) = 표본 부족·이력 짧음·급등 의심 중 하나 이상 · 판단 가능(초록) = 경고 없음</p>

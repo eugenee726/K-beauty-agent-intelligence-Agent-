@@ -11,7 +11,9 @@ decision_agent.py
   Step 4. ReportBuilder        — HTML 리포트 + CSV 익스포트
 
 기회 유형 (opportunity_type) — 특정 회사 관점 없이 브랜드 경쟁 구도로 분류:
-  기준은 캡션에서 언급된 '알려진 브랜드'(dim_brand)의 언급 점유. 판매처·사람 이름·연결 제품 브랜드는 제외.
+  기준은 트렌드 캡션 전체에서 코드로 센 '알려진 브랜드'(dim_brand) 언급 점유(tools/analyze/brand_count.py).
+  LLM 이 센 브랜드 수는 쓰지 않는다 — 입력의 제품 카탈로그 브랜드를 캡션에 없는데도 세는 경우가 있었음.
+  판매처·사람 이름은 dim_brand 에 없으므로 자연히 빠지고, 연결 제품의 브랜드도 세지 않는다.
   leader      : 언급 1위 브랜드 점유 ≥ 50% 그리고 ≥ 3건 → 한 브랜드가 트렌드를 선점
   contested   : 알려진 브랜드 언급은 있으나 과반 브랜드 없음 → 경쟁 구도
   white_space : 알려진 브랜드 언급 없음 → 연결 제품 있으면 '소통 공백', 없으면 '제품 공백'
@@ -133,8 +135,9 @@ class DecisionAgent:
             kw = row["keyword"]
             kw_to_products.setdefault(kw, []).append(dict(row))
 
+        from tools.analyze.brand_count import brand_patterns, count_brands
         with self._conn() as conn:
-            known_brands = self._known_brand_map(conn)
+            patterns = brand_patterns(conn)
 
         saved = 0
         for insight in llm_list:
@@ -190,10 +193,12 @@ class DecisionAgent:
             except Exception:
                 mentions = {}
 
-            # 경쟁 구도: 캡션에서 언급된 '알려진 브랜드'(dim_brand)의 언급 점유로 판단.
-            # 연결 제품의 브랜드는 '니즈에 맞는 제품 후보'라 구도 판단에서 제외(항상 여러 브랜드가 됨).
-            # 판매처(Olive Young, YesStyle)·사람 이름 등 dim_brand 에 없는 이름도 제외.
-            shares = self._brand_shares(mentions, known_brands)
+            # 경쟁 구도: 키워드 캡션 전체에서 코드로 센 '알려진 브랜드'(dim_brand) 언급 점유로 판단.
+            # (LLM 의 brand_mentions 는 저장·검증용으로만 남기고 판정에는 쓰지 않음)
+            with self._conn() as conn:
+                det = count_brands(conn, self.week, kw, patterns)
+            total = det["total"]
+            shares = [(b, n / total, n) for b, n in det["brands"]] if total else []
             if not shares:
                 opp_type = "white_space"
             elif shares[0][1] >= LEADER_SHARE and shares[0][2] >= LEADER_MIN_MENTIONS:
@@ -258,23 +263,6 @@ class DecisionAgent:
                 if k:
                     out[k] = b["brand_id"]
         return out
-
-    @staticmethod
-    def _brand_shares(mentions: dict, known_brands: dict[str, str]) -> list[tuple[str, float, int]]:
-        """언급 브랜드 중 알려진 브랜드만 모아 (brand_id, 언급 점유, 언급 건수) 내림차순."""
-        from tools.quality.insight_checks import _brand_key
-        counts: dict[str, int] = {}
-        for name, n in mentions.items():
-            bid = known_brands.get(_brand_key(name))
-            if not bid:
-                continue
-            try:
-                n = max(int(n), 1)
-            except (TypeError, ValueError):
-                n = 1
-            counts[bid] = counts.get(bid, 0) + n
-        total = sum(counts.values())
-        return sorted(((b, c / total, c) for b, c in counts.items()), key=lambda x: -x[1]) if total else []
 
     # 기회 유형별 의미 (마케터 관점)
     #   leader      : 한 브랜드가 이 니즈의 대화를 차지 → 주인공이면 강화, 아니면 벤치마크·차별화

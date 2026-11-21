@@ -74,6 +74,7 @@ select { font: inherit; padding: 7px 10px; border-radius: 10px; border: 1px soli
 .stat .n { font-size: 24px; font-weight: 800; }
 .stat .t { font-weight: 600; margin-top: 2px; }
 .stat .d { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.4; }
+.fail-sum { display: grid; gap: 6px; margin-bottom: 12px; padding: 10px 12px; background: var(--bg, #f8f9fa); border-radius: 8px; }
 
 .list { list-style: none; }
 .list li { padding: 10px 0; border-bottom: 1px solid var(--line); line-height: 1.5; }

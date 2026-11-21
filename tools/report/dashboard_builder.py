@@ -20,6 +20,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from tools.analyze.brand_count import BRAND_STOPWORDS, brand_patterns, count_brands
 from tools.report.html_report_tool import OPP_META, QUAD_META, SHAPE_META, HTMLReportTool
 
 logger = logging.getLogger(__name__)
@@ -45,22 +46,6 @@ def _week_dates(week: str) -> tuple[date, date, str]:
 
 def _first_sentence(text: str) -> str:
     return re.split(r"(?<=[.다])\s", (text or "").strip(), maxsplit=1)[0]
-
-
-# 결정적 브랜드 집계에서 제외할 이름: 일반 영어 단어와 같아 오탐이 나는 브랜드명
-BRAND_STOPWORDS = {"glow", "luna", "naming", "risky", "dove", "ideal", "about", "the phi", "fation", "finv"}
-
-
-def _brand_patterns(conn) -> list[tuple[re.Pattern, str]]:
-    """dim_brand 의 영문명·brand_id·aliases(3자 이상) → 단어 경계 정규식."""
-    names: dict[str, str] = {}
-    for r in conn.execute("SELECT brand_id, brand_name_en, aliases FROM dim_brand"):
-        cand = [r["brand_name_en"] or "", r["brand_id"].replace("_", " ")] + _json(r["aliases"], [])
-        for n in cand:
-            n = str(n).lower().strip()
-            if len(n) >= 3 and n not in BRAND_STOPWORDS:
-                names[n] = r["brand_id"]
-    return [(re.compile(r"(?<![a-z0-9])" + re.escape(n) + r"(?![a-z0-9])"), b) for n, b in names.items()]
 
 
 class DashboardBuilder:
@@ -126,28 +111,12 @@ class DashboardBuilder:
                                  WHERE week <= ? AND platform_id IN ('tiktok','youtube')
                                  GROUP BY keyword, week ORDER BY week""", (week,)):
             hist.setdefault(r["keyword"], []).append([r["week"], round(r["e"] or 0)])
-        # 결정적 집계: 키워드가 들어간 이번 주 캡션 전체(1차 raw + 2차 deep)에서 브랜드를 직접 센다 (캡션당 1회)
-        has_deep = bool(conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fact_sns_deep'").fetchone())
-
+        # 결정적 집계: 키워드가 들어간 이번 주 캡션 전체(1차 raw + 심층 deep)에서 브랜드를 직접 센다 (캡션당 1회).
+        # 대화 점유(기회 유형) 판정도 같은 함수를 쓴다 (tools/analyze/brand_count.py)
         def det_count(kw: str) -> dict:
-            plain = kw.replace("_", " ")
-            like = (f"%{kw.lower()}%", f"%{plain.lower()}%", f"%{kw.lower()}%")
-            sql = """SELECT post_id, content_text, hashtags FROM {t} WHERE week=?
-                     AND (LOWER(content_text) LIKE ? OR LOWER(content_text) LIKE ? OR LOWER(hashtags) LIKE ?)"""
-            rows = list(conn.execute(sql.format(t="fact_sns_raw"), (week, *like)))
-            deep = list(conn.execute(sql.format(t="fact_sns_deep") + " AND keyword=?", (week, *like, kw))) if has_deep else []
-            seen, counts, n_cap = set(), {}, 0
-            for r in rows + deep:
-                if r["post_id"] in seen:
-                    continue
-                seen.add(r["post_id"])
-                n_cap += 1
-                text = f'{r["content_text"] or ""} {r["hashtags"] or ""}'.lower()
-                for b in {bid for p, bid in self._patterns if p.search(text)}:
-                    counts[b] = counts.get(b, 0) + 1
-            top = sorted(counts.items(), key=lambda x: -x[1])
-            return {"captions": n_cap, "deep": len(deep), "total": sum(counts.values()), "brands": top[:12]}
+            d = count_brands(conn, week, kw, self._patterns)
+            d["brands"] = d["brands"][:12]
+            return d
 
         def top_share(kw: str):
             """1차 수집 원문에서 키워드가 들어간 게시물 조회수 중 1위 게시물 비중 (단일 게시물 의존 판단용)."""
@@ -275,7 +244,7 @@ class DashboardBuilder:
 
     def build(self) -> dict:
         with self._conn() as conn:
-            self._patterns = _brand_patterns(conn)
+            self._patterns = brand_patterns(conn)
             from agents.decision_agent import DecisionAgent
             known = DecisionAgent._known_brand_map(conn)
             names, company = {}, {}
