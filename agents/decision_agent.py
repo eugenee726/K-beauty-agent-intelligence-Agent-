@@ -14,8 +14,8 @@ decision_agent.py
   기준은 트렌드 캡션 전체에서 코드로 센 '알려진 브랜드'(dim_brand) 언급 점유(tools/analyze/brand_count.py).
   LLM 이 센 브랜드 수는 쓰지 않는다 — 입력의 제품 카탈로그 브랜드를 캡션에 없는데도 세는 경우가 있었음.
   판매처·사람 이름은 dim_brand 에 없으므로 자연히 빠지고, 연결 제품의 브랜드도 세지 않는다.
-  leader      : 언급 1위 브랜드 점유 ≥ 50% 그리고 ≥ 3건 → 한 브랜드가 트렌드를 선점
-  contested   : 알려진 브랜드 언급은 있으나 과반 브랜드 없음 → 경쟁 구도
+  leader(우세): 1위 브랜드 점유 ≥ 30%, 2위 언급의 2배 이상, 1위 언급 ≥ 3건 → 한 브랜드가 확실히 앞섬
+  contested   : 알려진 브랜드 언급은 있으나 우세 브랜드 없음 → 경쟁 구도
   white_space : 알려진 브랜드 언급 없음 → 연결 제품 있으면 '소통 공백', 없으면 '제품 공백'
 (이전 AP 관점 유형 amplify/position/counter/new_entry 는 과거 주차 데이터에만 남아 있다)
 
@@ -45,8 +45,10 @@ logger = logging.getLogger(__name__)
 # 랭킹이 전 브랜드(주당 ~450개)로 늘어나 전부 대상으로 하면 리뷰 스크랩이 1.5시간+ 걸리므로,
 # LLM 이 트렌드와 연결한 제품 + 추적 브랜드 중 카테고리별 TOP_RANK 이내 제품으로 한정한다.
 TOP_RANK = 30
-# 기회 유형: 언급 1위 브랜드의 점유가 과반이고 언급이 3건 이상이면 leader (1건 = 100% 오판 방지)
-LEADER_SHARE        = 0.5
+# 기회 유형 leader(우세): 1위 점유 ≥ 30% 그리고 2위 언급의 2배 이상 그리고 1위 언급 ≥ 3건 (1건 = 100% 오판 방지).
+# 캡션 전체를 세면 언급이 여러 브랜드로 흩어져 과반(50%)이 거의 나오지 않아, 2위 대비 상대 기준을 쓴다.
+LEADER_SHARE        = 0.3
+LEADER_RATIO        = 2.0
 LEADER_MIN_MENTIONS = 3
 TARGET_PRODUCTS_SQL = f"""
     SELECT product_id FROM fact_llm_insight_products WHERE week = ?
@@ -201,7 +203,8 @@ class DecisionAgent:
             shares = [(b, n / total, n) for b, n in det["brands"]] if total else []
             if not shares:
                 opp_type = "white_space"
-            elif shares[0][1] >= LEADER_SHARE and shares[0][2] >= LEADER_MIN_MENTIONS:
+            elif (shares[0][1] >= LEADER_SHARE and shares[0][2] >= LEADER_MIN_MENTIONS
+                  and (len(shares) == 1 or shares[0][2] >= LEADER_RATIO * shares[1][2])):
                 opp_type = "leader"
             else:
                 opp_type = "contested"
@@ -274,7 +277,8 @@ class DecisionAgent:
         who = ", ".join(f"{b.upper()} {s:.0%}" for b, s, _ in shares[:4])
         if opp_type == "leader":
             b, s, n = shares[0]
-            return f"{b.upper()}이(가) '{kw}' 브랜드 언급의 {s:.0%}({n}건)를 차지 — 선점."
+            ratio = f"2위의 {n / shares[1][2]:.1f}배" if len(shares) > 1 else "단독 언급"
+            return f"{b.upper()}이(가) '{kw}' 브랜드 언급의 {s:.0%}({n}건), {ratio} — 우세."
         elif opp_type == "contested":
             return f"주인 없는 각축 — 언급 점유 {who}."
         elif brand_ids:

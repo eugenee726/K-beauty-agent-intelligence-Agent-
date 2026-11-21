@@ -11,13 +11,13 @@
     LOW_SAMPLE_POSTS:   { v: 10,  label: '표본 부족', desc: '이번 주 게시물이 이 값보다 적으면 관찰 중' },
     MIN_CONSEC_WEEKS:   { v: 3,   label: '이력 짧음', desc: '이번 주까지 끊김 없이 이어진 ISO 주차 수가 이 값보다 적으면 관찰 중 (예: W45→W47은 W46이 없어 끊김)' },
     BIG_JUMP_RATIO:     { v: 10,  label: '급등 의심', desc: '직전 데이터 주차 대비 engagement가 이 배수 이상이면 관찰 중. 주차별 게시물 수가 데이터에 없어 게시물당 값 대신 총량으로 비교하고, 게시물 수를 함께 표시' },
-    MIN_MENTIONS:       { v: 5,   label: '판단 보류', desc: '트렌드 캡션 전체에서 센 브랜드 언급 합계가 이 값보다 적으면 대화 점유(선점·각축·공백)를 판단하지 않음' },
+    MIN_MENTIONS:       { v: 5,   label: '판단 보류', desc: '트렌드 캡션 전체에서 센 브랜드 언급 합계가 이 값보다 적으면 대화 점유(우세·각축·공백)를 판단하지 않음' },
     SURGE_Z:            { v: 2.0, label: '급등', desc: 'z-score가 이 값 이상이면 급등, 미만이면 완만한 상승으로 집계 (파이프라인 Z_ALERT와 같은 값)' },
     SUSTAIN_MOMENTUM:   { v: 1.5, label: '지속 기준선', desc: '레이더 가로 구분선. 파이프라인의 지속 상승 모멘텀 기준과 같은 값' },
     RADAR_X_MAX:        { v: 50,  label: '레이더 가로 상한', desc: '모멘텀이 이 배수를 넘으면 축 끝에 두고 실제 값을 라벨로 표시' },
     RADAR_Y_MAX:        { v: 10,  label: '레이더 세로 상한', desc: 'z-score가 이 값을 넘으면 축 위쪽 끝에 두고 실제 값을 라벨로 표시' },
     SHARE_TARGET_N:     { v: 40,  label: '점유 표본 하한', desc: '결정적 집계의 브랜드 언급이 이 값보다 적으면 점유를 "표본 부족(참고용)"으로 표시. n=40이면 점유 추정 오차가 약 ±15%p(95%)' },
-    LEADER_CI_LOWER:    { v: 0.5, label: '유의한 선점', desc: '결정적 집계에서 1위 브랜드 점유의 Wilson 95% 하한이 이 값을 넘으면 "유의한 선점"' },
+    LEAD_SEPARATED:     { v: 0.95, label: '유의한 우세', desc: '결정적 집계에서 1위 점유의 Wilson 95% 하한이 2위 점유의 95% 상한보다 높으면(두 구간이 겹치지 않음) "유의한 우세"' },
     VIRAL_SHARE:        { v: 0.8, label: '단일 게시물 의존', desc: '키워드 게시물 조회수 중 1위 게시물 비중이 이 값 이상이면 관찰 중 — 바이럴 영상 하나가 신호를 만든 경우' },
   };
   const SPONSOR_RE = /(#ad\b|#sponsored|partner|#광고|\[광고\]|쿠팡\s?파트너스|supported by|gifted|할인\s?코드|discount code|promo code|use code|code\s*[:：]\s*[a-z0-9]{3,})/i;
@@ -104,7 +104,8 @@
       const rows = t.det.brands, total = t.det.total, top = rows[0];
       const ci = top ? wilson(top[1], total) : [0, 0];
       return { src: '결정적', total, rows, captions: t.det.captions, deep: t.det.deep, ci,
-               small: total < RULES.SHARE_TARGET_N.v, sig: !!top && ci[0] > RULES.LEADER_CI_LOWER.v };
+               ci2: rows[1] ? wilson(rows[1][1], total) : [0, 0],
+               small: total < RULES.SHARE_TARGET_N.v, sig: !!top && ci[0] > (rows[1] ? wilson(rows[1][1], total)[1] : 0) };
     }
     const m = mentionsOf(w, t.kw);
     return { src: 'LLM', total: m.total, rows: m.rows, captions: null, ci: m.rows[0] ? wilson(m.rows[0][1], m.total) : [0, 0],
@@ -270,7 +271,7 @@
           <div class="tc-row1"><span class="name">${esc(kwName(t.kw))}</span> ${shapeTag(t)} ${tr.state === 'hold' ? '' : tag(esc(o.label), 'opp ' + o.o)} ${trustTag(tr)} ${reviewTag(fs)}</div>
           <div class="tc-need"><b>${esc(firstSentence(t.need))}</b>${spons && spons === t.evidence.length ? ' ' + tag('오가닉 근거 없음', 'warnline', '인용한 근거가 모두 협찬·광고 게시물입니다') : ''}${reviewTag(byKind('need'), '검토')}</div>
           <div class="tc-share">${shareBar(sh)} <span class="muted small">${shareNote(sh)}</span>
-            ${sh.total ? (sh.small ? tag('표본 부족(참고용)', 'trust hold', `언급 ${sh.total}건 < ${RULES.SHARE_TARGET_N.v}`) : sh.sig ? tag('유의한 선점', 'trust ok', `1위 95% 하한 ${pct(sh.ci[0])} > ${pct(RULES.LEADER_CI_LOWER.v)}`) : '') : ''}
+            ${sh.total ? (sh.small ? tag('표본 부족(참고용)', 'trust hold', `언급 ${sh.total}건 < ${RULES.SHARE_TARGET_N.v}`) : sh.sig ? tag('유의한 우세', 'trust ok', `1위 95% 하한 ${pct(sh.ci[0])} > 2위 95% 상한 ${pct(sh.ci2[1])}`) : '') : ''}
             ${brandFails.length ? reviewTag(brandFails, '브랜드 검토') : ''}</div>
           <div class="tc-reason muted small">${dup ? esc(reason) : '제안 · ' + esc(t.action)}</div>
         </div>
@@ -305,8 +306,8 @@
     const oppKey = x => x.tr.state === 'hold' ? 'hold' : x.t.opp;
     const counts = {}; items.forEach(x => counts[oppKey(x)] = (counts[oppKey(x)] || 0) + 1);
     const types = w.legacy ? Object.keys(counts) : ['leader', 'contested', 'white_space', 'hold'];
-    const desc = { leader: '한 브랜드의 대화 과반 점유. 1위 브랜드 메시지·제품 기준의 차별 포인트 탐색',
-                   contested: '대표 브랜드 없이 여러 브랜드가 분점. 이 니즈의 대표 제품 선점 기회',
+    const desc = { leader: '1위 브랜드가 2위의 2배 이상으로 앞섬. 1위 메시지·제품 기준의 차별 포인트 탐색',
+                   contested: '대표 브랜드 없이 여러 브랜드가 분점. 이 니즈의 대표 제품 자리 확보 기회',
                    white_space: '관심은 있으나 K-브랜드 언급 없음. 맞는 제품은 홍보, 없으면 제품 기획 검토',
                    hold: `브랜드 언급 ${RULES.MIN_MENTIONS.v}건 미만으로 점유 판단 불가. 다음 주 수집 후 재확인` };
     const label = o => o === 'hold' ? '판단 보류' : (META.opp[o] || {}).label || o;
@@ -560,6 +561,7 @@
 
   // ── 페이지: 방법론 ──
   // 텍스트 나열 대신 흐름도·도식·실제 데이터 차트로 기준을 보여 준다. 수치 기준은 RULES 와 파이프라인 상수 그대로.
+  const LEAD_PCT = 30;   // 파이프라인 LEADER_SHARE(0.3)와 같은 값 — 방법론 차트 기준선
   function pageMethod(mode, k) {
     const ws = periodWeeks(mode, k), w = ws[ws.length - 1];
     const rules = Object.entries(RULES).map(([key, r]) => `<tr><td><code>${key}</code></td><td>${esc(r.label)}</td><td class="num"><b>${r.v}</b></td><td>${esc(r.desc)}</td></tr>`).join('');
@@ -568,7 +570,8 @@
                   ['검증', '규칙 + 다른 모델 (Opus)'], ['대시보드', '주·월 단위 조회']];
     const detN = sum(Object.values(w.platforms)), deepN = sum(w.trends.map(t => (t.det && t.det.deep) || 0));
     const shares = w.trends.map(t => { const s = shareOf(w, t);
-      return { kw: kwName(t.kw), top: s.rows[0] ? brandName(s.rows[0][0]) : '—', v: s.total && s.rows[0] ? s.rows[0][1] / s.total : 0, n: s.total }; })
+      return { kw: kwName(t.kw), top: s.rows[0] ? brandName(s.rows[0][0]) : '—', v: s.total && s.rows[0] ? s.rows[0][1] / s.total : 0, n: s.total,
+               ratio: s.rows[1] ? s.rows[0][1] / s.rows[1][1] : null, lead: t.opp === 'leader' }; })
       .sort((a, b) => b.v - a.v);
     const v = valid([w]);
     const mini = (label, cls) => `<span class="tag ${cls}">${label}</span>`;
@@ -605,8 +608,8 @@
       ${card('대화 점유 (기회 유형)', `트렌드 캡션 전체에서 등록 브랜드 이름을 코드로 집계(캡션당 1회), LLM 집계 미사용 · 오른쪽은 ${esc(w.week)} 실제 값`,
         `<div class="grid2 inner">
            <div class="opp-ex">
-             <div><div class="oh">${mini('선점', 'opp')} 1위 50% 이상 · 3건 이상</div><div class="sharebar"><span class="seg-0" style="width:62%">A 62%</span><span class="seg-2" style="width:23%">B</span><span class="seg-3" style="width:15%">기타</span></div></div>
-             <div><div class="oh">${mini('각축', 'opp')} 과반 브랜드 없음</div><div class="sharebar"><span class="seg-0" style="width:30%">A 30%</span><span class="seg-1" style="width:25%">B 25%</span><span class="seg-2" style="width:20%">C</span><span class="seg-3" style="width:25%">기타</span></div></div>
+             <div><div class="oh">${mini('우세', 'opp')} 1위 30% 이상 · 2위의 2배 이상 · 3건 이상</div><div class="sharebar"><span class="seg-0" style="width:40%">A 40%</span><span class="seg-2" style="width:15%">B 15%</span><span class="seg-3" style="width:45%">기타</span></div></div>
+             <div><div class="oh">${mini('각축', 'opp')} 우세 브랜드 없음</div><div class="sharebar"><span class="seg-0" style="width:30%">A 30%</span><span class="seg-1" style="width:25%">B 25%</span><span class="seg-2" style="width:20%">C</span><span class="seg-3" style="width:25%">기타</span></div></div>
              <div><div class="oh">${mini('공백', 'opp')} K-브랜드 언급 없음</div><div class="sharebar empty-bar">언급 0건 · 맞는 제품 있으면 소통 공백, 없으면 제품 공백</div></div>
              <div><div class="oh">${mini('판단 보류', 'trust hold')} 언급 ${RULES.MIN_MENTIONS.v}건 미만</div><div class="sharebar empty-bar">표본 부족으로 판단 안 함</div></div>
            </div>
@@ -655,16 +658,16 @@
           scales: { y: { beginAtZero: true, title: { display: true, text: 'z ≥ 2 키워드 수' }, grid: { color: '#f1f3f5' } }, x: { grid: { display: false } } } } });
       if (shares.length) chart(document.getElementById('m_share'), { type: 'bar',
         data: { labels: shares.map(s => s.kw), datasets: [{ data: shares.map(s => +(s.v * 100).toFixed(1)),
-          backgroundColor: shares.map(s => s.v >= 0.5 ? DARK : LIGHT), borderRadius: 4 }] },
-        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 70, top: 16 } },
-          plugins: { legend: { display: false }, title: { display: true, text: '트렌드별 1위 브랜드 점유 (%)', align: 'start', font: { size: 12 } },
-            tooltip: { callbacks: { label: c => `${shares[c.dataIndex].top} ${c.raw}% · 언급 ${shares[c.dataIndex].n}건` } } },
+          backgroundColor: shares.map(s => s.lead ? DARK : LIGHT), borderRadius: 4 }] },
+        options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, layout: { padding: { right: 130, top: 16 } },
+          plugins: { legend: { display: false }, title: { display: true, text: '트렌드별 1위 브랜드 점유 (%) · 진한 막대 = 우세', align: 'start', font: { size: 12 } },
+            tooltip: { callbacks: { label: c => { const s = shares[c.dataIndex]; return `${s.top} ${c.raw}% · 2위의 ${s.ratio ? s.ratio.toFixed(1) + '배' : '—'} · 언급 ${s.n}건`; } } } },
           scales: { x: { min: 0, max: 100, grid: { color: '#f1f3f5' } }, y: { grid: { display: false } } } },
-        plugins: [{ id: 'th', afterDatasetsDraw(c) { const { ctx, chartArea: a, scales: s } = c; const x = s.x.getPixelForValue(50);
+        plugins: [{ id: 'th', afterDatasetsDraw(c) { const { ctx, chartArea: a, scales: s } = c; const x = s.x.getPixelForValue(LEAD_PCT);
           ctx.save(); ctx.strokeStyle = ACCENT; ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(x, a.top); ctx.lineTo(x, a.bottom); ctx.stroke();
-          ctx.setLineDash([]); ctx.fillStyle = ACCENT; ctx.font = '11px Pretendard'; ctx.fillText('선점 기준 50%', x + 4, a.top - 4);
+          ctx.setLineDash([]); ctx.fillStyle = ACCENT; ctx.font = '11px Pretendard'; ctx.fillText(`우세 하한 ${LEAD_PCT}%`, x + 4, a.top - 4);
           ctx.fillStyle = '#495057'; ctx.textBaseline = 'middle';
-          c.getDatasetMeta(0).data.forEach((b, i) => ctx.fillText(`${shares[i].top} ${shares[i].v ? pct(shares[i].v) : ''}`, b.x + 6, b.y)); ctx.restore(); } }] });
+          c.getDatasetMeta(0).data.forEach((b, i) => ctx.fillText(`${shares[i].top} ${shares[i].v ? pct(shares[i].v) : ''}${shares[i].ratio ? ` · 2위의 ${shares[i].ratio.toFixed(1)}배` : ''}`, b.x + 6, b.y)); ctx.restore(); } }] });
       if (v.rate !== null) {
         const rows = [['규칙', v.rule], ['Opus', v.llm]];
         chart(document.getElementById('m_valid'), { type: 'bar',

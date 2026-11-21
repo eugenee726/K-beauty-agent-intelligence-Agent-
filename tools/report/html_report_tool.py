@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # ── 기회 유형 / 전략 사분면 한국어 + 색상 매핑 ──
 OPP_META = {
     # 현재 유형 (대화 점유 구도)
-    "leader":      {"label": "선점", "color": "#d6336c", "bg": "#fbe9f0"},
+    "leader":      {"label": "우세", "color": "#d6336c", "bg": "#fbe9f0"},
     "contested":   {"label": "각축", "color": "#495057", "bg": "#f1f3f5"},
     "white_space": {"label": "공백", "color": "#868e96", "bg": "#f8f9fa"},
     # 과거 주차(AP 관점) 데이터 표시용
@@ -364,8 +364,8 @@ class HTMLReportTool:
             </ol>
           </div>
           <div style="font-size:0.8rem;color:#555;line-height:1.9;margin-top:0.8rem;border-top:1px solid #eee;padding-top:0.7rem">
-            <strong>대화 점유(기회 유형)</strong> — 캡션 속 K-뷰티 브랜드 언급 기준. 판매처·사람 이름·서구 브랜드 제외<br>
-            선점: 1위 브랜드 ≥ 50% 그리고 ≥ 3건 · 각축: 과반 브랜드 없음 · 공백: K-브랜드 언급 없음(맞는 제품이 있으면 소통 공백, 없으면 제품 공백)
+            <strong>대화 점유(기회 유형)</strong> — 트렌드 캡션 전체에서 코드로 센 등록 브랜드 언급 기준<br>
+            우세: 1위 브랜드 ≥ 30%, 2위의 2배 이상, 3건 이상 · 각축: 우세 브랜드 없음 · 공백: K-브랜드 언급 없음(맞는 제품이 있으면 소통 공백, 없으면 제품 공백)
           </div>
         </div>'''
 
