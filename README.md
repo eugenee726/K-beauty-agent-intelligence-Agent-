@@ -427,7 +427,7 @@ ssh -L 8080:localhost:8080 ubuntu@<VM_IP>   # 로컬 브라우저에서 localhos
 | 미국 실구매 채널 | 리테일 신호가 OY Global(방한)·Sephora(리뷰) 중심, Amazon 미반영 | Amazon Best Sellers 연동 (Apify, 월 약 $17, 설계 완료) |
 | LLM 판정 신뢰도 | 판정 모델 자체는 미보정 | 사람 라벨 정답 세트(약 50건)로 판정 일치도(κ, AC1) 측정 |
 
-> 진행 예정 작업은 [`TODO.md`](TODO.md) 참고.
+> 다음 작업은 [`ROADMAP.md`](ROADMAP.md) 참고.
 
 ---
 
@@ -477,4 +477,3 @@ kbeauty_agent_v3/
 └── db/schema.sql                   # 테이블 정의
 ```
 
-> [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md)는 2026-06 기준(AP 13개 브랜드, LLM 오케스트레이터) 설계 문서로, 산식 상세 참고용이다. 현재 구조는 이 README가 기준.

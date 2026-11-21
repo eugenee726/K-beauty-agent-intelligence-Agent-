@@ -35,5 +35,6 @@ debug_*.png
 .DS_Store
 Thumbs.db
 
-# 개인 포트폴리오 파일 (공개 저장소 제외)
+# 문서 바이너리
 *.pptx
+db/backup/
