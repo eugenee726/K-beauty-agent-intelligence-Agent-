@@ -17,6 +17,18 @@
        (Cloudflare 차단 위험 있으니 소량으로) ③ 성분·효능 아코디언 수집을 빼고 카테고리만 수집
 - [ ] 11/20 카탈로그에서 페이지 로드 실패한 브랜드(Centellian24, medicube) 재수집 확인
 
+## 미국 실구매 채널: Amazon Best Sellers 연동 (지원 후, 설계 완료)
+- 수집: Apify Amazon Best Sellers 액터 (공식 API PA-API 5는 2026 상반기 종료 → Creators API는 Associates 실적 필요라 제외)
+  - Beauty › Skin Care 하위 8개 리스트 × 100위 = 주 800건 → **월 약 $17** (junglee $5/1K, 저가 액터면 $4~7)
+  - Apify 클라우드에서 수집 → 서버 CPU 부담 없음
+- [ ] 1단계 (4~6시간, 판정 로직 불변): `tools/collect/amazon_tool.py` (Apify 패턴은 `tiktok_tool.py` 재사용)
+  → `_known_brand_map` 으로 K-브랜드만 → `find_matching_product` 매칭(같은 브랜드 내 퍼지 85)
+  → `fact_retail_rankings` platform `amazon_us` → DAG `collect_amazon` 병렬 태스크 + `data_quality` MIN_ROWS
+  → 리포트 제품·방한 탭에 Amazon 순위 열
+  - 검증: K-브랜드 통과 건수, 기존 제품 매칭률, 매칭 20건 수작업 대조
+- [ ] 2단계 (+2~3시간, **판정 로직 변경 → 승인 필요**): Pick Score 리테일 인기 = max(OY, Sephora, Amazon), 4분면 retail_score 반영
+- [ ] 3단계 (+반나절): Amazon 리뷰 VOC (리뷰 액터 $0.3~1.5/1K)
+
 ## 12/3 이후
 - [ ] W47 → W49 2주 뒤 유지율 계산 (기존 기준: Z ≥ 2.0, trend_shape)
 
