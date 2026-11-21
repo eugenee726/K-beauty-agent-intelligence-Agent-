@@ -137,6 +137,13 @@ def kbeauty_weekly():
             HTMLReportTool("db/kbeauty.db", str(Path("db/kbeauty.db").resolve().parent.parent / "exports")).generate(status["week"])
         except Exception as e:
             log.error(f"검증 반영 리포트 재생성 실패: {e}")
+
+        # 전체 주차 대시보드(dashboard/) 갱신 — 주·월 선택 가능한 정적 웹앱
+        try:
+            from tools.report.dashboard_builder import DashboardBuilder
+            out["dashboard"] = str(DashboardBuilder("db/kbeauty.db").write("exports/dashboard"))
+        except Exception as e:
+            log.error(f"대시보드 갱신 실패: {e}")
         return out
 
     @task(trigger_rule="none_failed")

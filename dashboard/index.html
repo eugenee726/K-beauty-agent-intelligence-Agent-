@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K-beauty Trend Radar</title>
+<meta name="description" content="미국 K-뷰티 시장 주간 트렌드 대시보드 — SNS·리테일 데이터 기반, LLM 인사이트 자동 검증">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">K-beauty<br><span>Trend Radar</span></div>
+    <nav id="nav">
+      <a data-page="overview">개요</a>
+      <a data-page="trends">트렌드</a>
+      <a data-page="brands">브랜드</a>
+      <a data-page="products">제품·VOC</a>
+      <a data-page="inbound">방한 추천</a>
+      <a data-page="quality">검증·품질</a>
+      <a data-page="method">방법론</a>
+    </nav>
+    <div class="side-foot" id="sideFoot"></div>
+  </aside>
+  <main>
+    <header class="top">
+      <div>
+        <h1 id="pageTitle">개요</h1>
+        <div class="sub" id="periodLabel"></div>
+      </div>
+      <div class="controls">
+        <div class="seg" id="modeSeg">
+          <button data-mode="week">주간</button>
+          <button data-mode="month">월간</button>
+        </div>
+        <select id="periodSelect" aria-label="기간 선택"></select>
+        <span class="badge" id="trustBadge"></span>
+      </div>
+    </header>
+    <div id="banner"></div>
+    <div id="content"></div>
+  </main>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
