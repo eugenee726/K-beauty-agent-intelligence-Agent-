@@ -325,8 +325,11 @@
                       y: { display: false, beginAtZero: true } } } });
       });
       // 레이더
-      const pts = items.map(x => ({ x: Math.min(Math.max(x.t.mom, 0.5), RULES.RADAR_X_MAX.v), y: Math.max(Math.min(x.t.z, RULES.RADAR_Y_MAX.v), -2),
-                                    r: 7 + Math.sqrt(Math.min(x.t.posts, 60)) * 2, x0: x }));
+      // 세로축은 이번 주 z 범위에 맞추되, 급등 기준선(z 2)은 항상 보이게
+      const zs = items.map(x => Math.min(x.t.z, RULES.RADAR_Y_MAX.v));
+      const yMin = Math.min(-1, Math.floor(Math.min(...zs)) - 0.5), yMax = Math.max(RULES.SURGE_Z.v + 1, Math.min(RULES.RADAR_Y_MAX.v + 1, Math.ceil(Math.max(...zs)) + 1));
+      const pts = items.map(x => ({ x: Math.min(Math.max(x.t.mom, 0.5), RULES.RADAR_X_MAX.v), y: Math.max(Math.min(x.t.z, RULES.RADAR_Y_MAX.v), yMin),
+                                    r: 6 + Math.sqrt(Math.min(x.t.posts, 60)) * 1.1, x0: x }));
       chart(document.getElementById('radar'), { type: 'bubble',
         data: { datasets: [{ data: pts, backgroundColor: pts.map(p => p.x0.tr.state === 'ok' ? DARK + 'cc' : 'rgba(0,0,0,0)'),
           borderColor: DARK, borderWidth: 1.5, clip: false }] },
@@ -335,7 +338,7 @@
             return `${c.dataIndex + 1}. ${kwName(x.t.kw)} · ${shapeView(x.t).label} · z ${zf(x.t.z)} · 모멘텀 ${momf(x.t.mom)} · 게시물 ${x.t.posts} · ${TRUST[x.tr.state].label}`; } } } },
           onClick: (e, els) => { if (els.length) focus(pts[els[0].index].x0.i); },
           scales: { x: { type: 'logarithmic', min: 0.5, max: RULES.RADAR_X_MAX.v, title: { display: true, text: '모멘텀 (배, 로그)' } },
-                    y: { min: -2, max: RULES.RADAR_Y_MAX.v + 1, title: { display: true, text: 'z-score' } } } },
+                    y: { min: yMin, max: yMax, title: { display: true, text: 'z-score (게시물 비중)' } } } },
         plugins: [{ id: 'quad', beforeDatasetsDraw(c) { const { ctx, chartArea: a, scales: s } = c;
             const xv = s.x.getPixelForValue(RULES.SUSTAIN_MOMENTUM.v), yv = s.y.getPixelForValue(RULES.SURGE_Z.v);
             ctx.save(); ctx.strokeStyle = '#dee2e6'; ctx.setLineDash([4, 4]); ctx.beginPath();
