@@ -165,7 +165,9 @@
         ${card(mode === 'week' ? '이번 주 판단' : '이번 달 판단', `'판단 가능' 트렌드 중 z-score 상위 3개. 판단 가능 = 표본·이력·급등 경고 없음 + K-브랜드 언급 ${RULES.MIN_MENTIONS.v}건 이상 (방법론 › 화면 표시 규칙)`,
           ok.length ? `<ol class="judge">${ok.map(line).join('')}</ol>`
             : `<div class="empty left">판단 가능한 트렌드가 없습니다. 모든 트렌드에 경고가 있어 아래 '관찰 중'에 모았습니다.<br>
-               <span class="muted">수집 주차가 띄엄띄엄이라(연속 ${RULES.MIN_CONSEC_WEEKS.v}주 미만) 이력 경고가 붙습니다. 매주 자동 수집이 이어지면 ${nextOk}부터 판단 가능한 트렌드가 나올 수 있습니다.</span></div>`)}
+               <span class="muted">${last.week === WEEKS[WEEKS.length - 1].week
+                 ? `수집 주차가 띄엄띄엄이라(연속 ${RULES.MIN_CONSEC_WEEKS.v}주 미만) 이력 경고가 붙습니다. 매주 자동 수집이 이어지면 ${nextOk}부터 판단 가능한 트렌드가 나올 수 있습니다.`
+                 : `이 기간은 앞뒤 수집이 비어 있어(연속 ${RULES.MIN_CONSEC_WEEKS.v}주 미만) 이력 경고가 붙었습니다.`}</span></div>`)}
         ${card(`관찰 중 ${watch.length}`, '경고가 붙은 트렌드. 칩에 마우스를 올리면 사유가 보입니다.',
           watch.length ? watch.map(x => `<a class="chip watch-chip ${x.tr.state}" href="?${mode === 'week' ? 'w' : 'm'}=${k}#trends" data-kw="${esc(x.t.kw)}" title="${esc(x.tr.reasons.join('\n'))}">
             ${esc(kwName(x.t.kw))} <small>${TRUST[x.tr.state].label}</small></a>`).join('') : empty('없음'))}
