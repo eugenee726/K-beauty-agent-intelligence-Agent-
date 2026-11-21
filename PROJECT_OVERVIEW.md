@@ -1,5 +1,7 @@
 # K-Beauty Intelligence Agent v3 — 프로젝트 개요
 
+> ⚠️ **2026-06 기준 문서입니다.** 이후 LLM 오케스트레이터·APScheduler·Windows 작업 스케줄러는 Apache Airflow(AWS)로 대체되었고, 분석 대상은 AP 13개 브랜드에서 K-뷰티 43개 브랜드로 확장되었으며, LLM 출력 검증 단계가 추가되었습니다. 현재 구조는 [README](README.md)를 기준으로 봐 주세요. 이 문서는 산식·테이블 상세 참고용으로 남겨둡니다.
+
 > 최종 업데이트: 2026-06-25
 > 버전: v3 (kbeauty_agent_v3)
 

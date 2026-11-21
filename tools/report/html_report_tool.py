@@ -790,7 +790,32 @@ class HTMLReportTool:
                       f'<tbody>{items}</tbody></table></details>')
         else:
             review = ""
-        return {"kpis": kpis, "summary": summary, "trust": trust, "review": review}
+        return {"kpis": kpis, "summary": summary, "trust": trust, "review": review,
+                "brands": self._rising_brands(week)}
+
+    def _rising_brands(self, week: str) -> str:
+        """
+        이번 주 급상승 브랜드. 트렌드 키워드에서는 브랜드명을 제외하므로(analysis_agent._exclude_keywords)
+        브랜드 급상승은 여기서 따로 보여준다. 기준은 트렌드와 동일: z ≥ Z_ALERT, 게시물 ≥ MIN_POST_COUNT.
+        """
+        from agents.analysis_agent import GENERIC_EXCLUDE, _exclude_keywords
+        from tools.analyze.stats_tool import StatsTool
+        brand_kws = _exclude_keywords(self.db_path) - GENERIC_EXCLUDE
+        with self._conn() as conn:
+            rows = conn.execute("""SELECT keyword, SUM(post_count) posts, MAX(z_score) z
+                                   FROM fact_sns_signals WHERE week=?
+                                   GROUP BY keyword HAVING MAX(z_score) >= ?
+                                   ORDER BY z DESC""", (week, StatsTool.Z_ALERT)).fetchall()
+        rows = [r for r in rows if r["keyword"].lower() in brand_kws]
+        main = [r for r in rows if r["posts"] >= StatsTool.MIN_POST_COUNT]
+        low = [r for r in rows if r["posts"] < StatsTool.MIN_POST_COUNT]
+        chip = lambda r: (f'<span class="bchip"><strong>{r["keyword"]}</strong>'
+                          f'<span class="muted"> z {r["z"]:.1f} · {r["posts"]}건</span></span>')
+        body = "".join(chip(r) for r in main) or '<span class="muted">기준(z ≥ 2.0, 게시물 ≥ 5) 충족 브랜드 없음</span>'
+        note = (f'<div class="muted bnote">게시물 5건 미만이라 참고만: '
+                f'{", ".join(f"{r[0]} (z {r[2]:.1f}, {r[1]}건)" for r in low)}</div>') if low else ""
+        return (f'<div class="card"><h2 class="blk">이번 주 급상승 브랜드</h2>{body}{note}'
+                f'<div class="muted bnote">트렌드 키워드와 같은 기준. 브랜드명은 트렌드(니즈·성분·제형) 목록에서 제외하고 여기서 따로 집계</div></div>')
 
     @staticmethod
     def _week_label(week: str) -> str:
@@ -874,6 +899,10 @@ class HTMLReportTool:
   .summary ol {{ padding-left: 1.2rem; font-size: 0.875rem; line-height: 1.8; }}
   .pill {{ display: inline-block; margin: 0 0.4rem; padding: 0 0.5rem; border-radius: 999px;
            background: #fbe9f0; color: var(--primary); font-size: 0.75rem; }}
+  .blk {{ font-size: 0.875rem; color: var(--muted); font-weight: 600; margin-bottom: 0.6rem; }}
+  .bchip {{ display: inline-block; margin: 0 0.5rem 0.4rem 0; padding: 0.3rem 0.7rem; border-radius: 999px;
+            background: #fbe9f0; font-size: 0.875rem; }}
+  .bnote {{ font-size: 0.75rem; margin-top: 0.4rem; }}
   .review summary {{ cursor: pointer; font-weight: 600; font-size: 0.875rem; }}
   .review table {{ margin-top: 0.8rem; }}
   .muted {{ color: var(--muted); font-weight: 400; }}
@@ -925,6 +954,7 @@ class HTMLReportTool:
 <section class="landing">
   <div class="kpis">{ov["kpis"]}</div>
   <div class="card summary"><h2>이번 주 요약</h2><ol>{ov["summary"]}</ol></div>
+  {ov["brands"]}
   {ov["review"]}
 </section>
 
