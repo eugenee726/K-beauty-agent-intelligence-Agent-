@@ -198,3 +198,9 @@ ol.judge .need { color: var(--ink-2); font-size: 13px; }
   .tcard .tc-main { grid-template-columns: 1fr; }
   .tcard .tc-reason { white-space: normal; }
 }
+
+/* KPI 키워드 칩, 소형 전환 버튼 */
+.kpi .kwchips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+.kwchip { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #f1f3f5; color: var(--ink-2); text-decoration: none; }
+.kwchip:hover { background: #e9ecef; }
+.small-seg button { font-size: 12px; padding: 5px 12px; }

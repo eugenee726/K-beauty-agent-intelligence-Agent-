@@ -16,6 +16,8 @@
     SUSTAIN_MOMENTUM:   { v: 1.5, label: '지속 기준선', desc: '레이더 가로 구분선. 파이프라인의 지속 상승 모멘텀 기준과 같은 값' },
     RADAR_X_MAX:        { v: 50,  label: '레이더 가로 상한', desc: '모멘텀이 이 배수를 넘으면 축 끝에 두고 실제 값을 라벨로 표시' },
     RADAR_Y_MAX:        { v: 10,  label: '레이더 세로 상한', desc: 'z-score가 이 값을 넘으면 축 위쪽 끝에 두고 실제 값을 라벨로 표시' },
+    SHARE_TARGET_N:     { v: 40,  label: '점유 표본 하한', desc: '결정적 집계의 브랜드 언급이 이 값보다 적으면 점유를 "표본 부족(참고용)"으로 표시. n=40이면 점유 추정 오차가 약 ±15%p(95%)' },
+    LEADER_CI_LOWER:    { v: 0.5, label: '유의한 선점', desc: '결정적 집계에서 1위 브랜드 점유의 Wilson 95% 하한이 이 값을 넘으면 "유의한 선점"' },
   };
   const SPONSOR_RE = /(#ad\b|#sponsored|partner|#광고|\[광고\]|쿠팡\s?파트너스|supported by|gifted|할인\s?코드|discount code|promo code|use code|code\s*[:：]\s*[a-z0-9]{3,})/i;
 
@@ -88,6 +90,35 @@
     return { state, reasons, mentions: m, base };
   }
   const isSponsor = e => SPONSOR_RE.test(e);
+  // Wilson 95% 구간
+  const wilson = (k, n) => { if (!n) return [0, 0]; const z = 1.96, p = k / n, d = 1 + z * z / n;
+    const c = p + z * z / (2 * n), m = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)); return [(c - m) / d, (c + m) / d]; };
+  // 점유 표시용: 결정적 집계(det)가 있으면 그것을, 없으면 LLM 언급(matrix)을 쓴다
+  function shareOf(w, t) {
+    if (t.det && t.det.total) {
+      const rows = t.det.brands, total = t.det.total, top = rows[0];
+      const ci = top ? wilson(top[1], total) : [0, 0];
+      return { src: '결정적', total, rows, captions: t.det.captions, deep: t.det.deep, ci,
+               small: total < RULES.SHARE_TARGET_N.v, sig: !!top && ci[0] > RULES.LEADER_CI_LOWER.v };
+    }
+    const m = mentionsOf(w, t.kw);
+    return { src: 'LLM', total: m.total, rows: m.rows, captions: null, ci: m.rows[0] ? wilson(m.rows[0][1], m.total) : [0, 0],
+             small: m.total < RULES.SHARE_TARGET_N.v, sig: false };
+  }
+  const shareNote = sh => sh.total ? `언급 ${sh.total}건${sh.captions !== null ? ` · 캡션 ${sh.captions}건` : ''} · 1위 95% 범위 ${pct(sh.ci[0])}~${pct(sh.ci[1])}` : '언급 없음';
+  const FAIL_TYPE = { direct_quote: '인용 불일치', brand_count: '언급 수 불일치', indirect_reason: '근거 부족', korean_need: '형식 오류',
+                      llm_product: '제품 연결 오류', llm_brand: '브랜드 오인', llm_need: '니즈 해석 문제', llm_opportunity: '기회 해석 문제' };
+  function failPlain(f) {
+    const who = f.target_name || f.target;
+    if (f.check_type === 'brand_count') { const m = /(\d+)건 중 '.*?' 등장 (\d+)건 \(LLM 주장 (.+?)\)/.exec(f.detail || '');
+      return m ? `LLM은 '${f.target}'이(가) ${m[3]}번 나온다고 했지만, 실제 캡션 ${m[1]}건에는 ${m[2]}번` : `언급 수가 실제 캡션과 다름 — ${f.detail}`; }
+    if (f.check_type === 'direct_quote') return `근거로 든 인용문이 실제 캡션에 없음 (${who} 연결 근거). 여러 캡션을 이어 붙였거나 바꿔 쓴 문장`;
+    if (f.check_type === 'indirect_reason') return `${who} 간접 연결의 근거 문장이 비어 있거나 너무 짧음`;
+    if (f.check_type === 'korean_need') return '소비자 니즈가 한국어로 작성되지 않음';
+    if (f.check_type === 'llm_product') return `'${who}' 연결이 캡션 근거와 맞지 않음 — ${f.detail}`;
+    if (f.check_type === 'llm_brand') return `'${f.target}'은(는) 뷰티 브랜드로 보기 어려움 — ${f.detail}`;
+    return f.detail || '';
+  }
   const failsOf = (w, kw) => w.fails.filter(f => f.keyword === kw);
   const failKind = f => /^S\d{6,}$/.test(f.target) ? 'evidence' : ['consumer_need', 'opportunity'].includes(f.target) ? 'need' : 'brand';
   const failTip = fs => fs.map(f => `[${f.checker === 'rule' ? '규칙' : 'LLM'}] ${f.target}: ${f.detail}`).join('\n');
@@ -157,6 +188,7 @@
     const rising = mode === 'week' ? last.rising_brands : Object.values(ws.flatMap(w => w.rising_brands).reduce((m, b) => {
       const x = m[b.kw] || (m[b.kw] = { ...b, n: 0 }); x.n++; x.z = Math.max(x.z, b.z); x.posts = Math.max(x.posts, b.posts); x.ok = x.ok || b.ok; return m; }, {}));
     const nextOk = weekAdd(last.week, RULES.MIN_CONSEC_WEEKS.v - 1);
+    const kwChip = x => `<a class="kwchip" href="?${mode === 'week' ? 'w' : 'm'}=${k}#trends" data-kw="${esc(x.t.kw)}" title="z ${zf(x.t.z)} · ${TRUST[x.tr.state].label}">${esc(kwName(x.t.kw))}</a>`;
     const line = x => { const s = shapeView(x.t), o = oppView(x.t, x.tr);
       return `<li><span class="kw">${esc(kwName(x.t.kw))}</span> <span class="muted">${s.icon} ${s.label} · ${esc(o.label)} · z ${zf(x.t.z)}</span>
         <div class="need">${esc(firstSentence(x.t.need))}</div></li>`; };
@@ -173,8 +205,10 @@
             ${esc(kwName(x.t.kw))} <small>${TRUST[x.tr.state].label}</small></a>`).join('') : empty('없음'))}
       </div>
       <div class="kpis">
-        <div class="kpi"><div class="label">급등</div><div class="val">${surge}</div><div class="delta">z ≥ ${RULES.SURGE_Z.v}</div></div>
-        <div class="kpi"><div class="label">완만한 상승</div><div class="val">${pt.length - surge}</div><div class="delta">z < ${RULES.SURGE_Z.v} (지속 상승으로 선정)</div></div>
+        <div class="kpi"><div class="label">급등 <span class="muted small">z ≥ ${RULES.SURGE_Z.v}</span></div><div class="val">${surge}</div>
+          <div class="kwchips">${pt.filter(x => strength(x.t) === '급등').map(kwChip).join('') || '<span class="muted small">없음</span>'}</div></div>
+        <div class="kpi"><div class="label">완만한 상승 <span class="muted small">z < ${RULES.SURGE_Z.v}</span></div><div class="val">${pt.length - surge}</div>
+          <div class="kwchips">${pt.filter(x => strength(x.t) !== '급등').map(kwChip).join('') || '<span class="muted small">없음</span>'}</div></div>
         <div class="kpi"><div class="label">관찰 중 / 판단 보류</div><div class="val">${watch.filter(x => x.tr.state === 'watch').length} / ${watch.filter(x => x.tr.state === 'hold').length}</div><div class="delta">경고 있음 / 언급 ${RULES.MIN_MENTIONS.v}건 미만</div></div>
         <div class="kpi"><div class="label">검토 필요</div><div class="val review-num">${v.fails}</div><div class="delta">LLM 출력 자동 검증 실패</div></div>
       </div>
@@ -187,7 +221,7 @@
       </div>
       ${card('주차별 SNS 수집량', '막대 = 게시물 수, 선 = engagement 합계. 선택한 기간의 막대만 강조합니다.', '<div style="position:relative;height:220px"><canvas id="tlChart"></canvas></div>')}`;
     return [html, () => {
-      document.querySelectorAll('.watch-chip').forEach(a => a.onclick = e => { e.preventDefault(); openKw = a.dataset.kw; go({ page: 'trends' }); });
+      document.querySelectorAll('.watch-chip, .kwchip').forEach(a => a.onclick = e => { e.preventDefault(); openKw = a.dataset.kw; go({ page: 'trends' }); });
       document.querySelectorAll('[data-page-link]').forEach(a => a.onclick = e => { e.preventDefault(); go({ page: a.dataset.pageLink }); });
       const tl = D.timeline, sel = new Set(ws.map(w => w.week));
       chart(document.getElementById('tlChart'), {
@@ -207,8 +241,8 @@
     const tr = trustOf(w, t), o = oppView(t, tr), fs = failsOf(w, t.kw);
     const byKind = k => fs.filter(f => failKind(f) === k);
     const spons = t.evidence.filter(isSponsor).length;
-    const top = tr.mentions.rows[0];
-    const reason = `선행 ${t.lead || '—'} · ${t.cross ? 'TikTok·YouTube 동시' : '단일 플랫폼'} · 1위 브랜드 점유 ${top ? pct(top[1] / tr.mentions.total) : '—'} · 협찬 근거 ${spons}/${t.evidence.length}`;
+    const sh = shareOf(w, t), top = sh.rows[0];
+    const reason = `선행 ${t.lead || '—'} · ${t.cross ? 'TikTok·YouTube 동시' : '단일 플랫폼'} · 1위 브랜드 점유 ${top ? pct(top[1] / sh.total) : '—'} · 협찬 근거 ${spons}/${t.evidence.length}`;
     const dup = dupActions.has(t.kw);
     const brandFails = byKind('brand');
     const chipFail = name => brandFails.filter(f => key(f.target) === key(name));
@@ -218,7 +252,9 @@
         <div class="tc-left">
           <div class="tc-row1"><span class="name">${esc(kwName(t.kw))}</span> ${shapeTag(t)} ${tr.state === 'hold' ? '' : tag(esc(o.label), 'opp ' + o.o)} ${trustTag(tr)} ${reviewTag(fs)}</div>
           <div class="tc-need"><b>${esc(firstSentence(t.need))}</b>${spons && spons === t.evidence.length ? ' ' + tag('오가닉 근거 없음', 'warnline', '인용한 근거가 모두 협찬·광고 게시물입니다') : ''}${reviewTag(byKind('need'), '검토')}</div>
-          <div class="tc-share">${shareBar(tr.mentions)} <span class="muted small">언급 ${tr.mentions.total}건 기준</span>${brandFails.length ? reviewTag(brandFails, '브랜드 검토') : ''}</div>
+          <div class="tc-share">${shareBar(sh)} <span class="muted small">${shareNote(sh)}</span>
+            ${sh.total ? (sh.small ? tag('표본 부족(참고용)', 'trust hold', `언급 ${sh.total}건 < ${RULES.SHARE_TARGET_N.v}`) : sh.sig ? tag('유의한 선점', 'trust ok', `1위 95% 하한 ${pct(sh.ci[0])} > ${pct(RULES.LEADER_CI_LOWER.v)}`) : '') : ''}
+            ${brandFails.length ? reviewTag(brandFails, '브랜드 검토') : ''}</div>
           <div class="tc-reason muted small">${dup ? esc(reason) : '제안 · ' + esc(t.action)}</div>
         </div>
         <div class="tc-spark"><canvas id="sp_${i}"></canvas></div>
@@ -226,7 +262,9 @@
       <button class="tc-toggle" data-track="trend_card_expand" data-kw="${esc(t.kw)}">${open ? '접기 ▲' : '자세히 ▼'}</button>
       <div class="tc-more">
         <div class="kv"><span>z ${zf(t.z)}</span><span>모멘텀 ${momf(t.mom)}${tr.base ? ` (비교 기준 ${tr.base.slice(5)})` : ''}</span><span>게시물 ${fmt(t.posts)}</span><span>engagement ${engf(t.eng)}</span><span>선행 ${esc(t.lead || '—')}</span></div>
-        <p><b>대화 점유</b> · ${esc(t.summary)} <span class="muted small">(언급 ${tr.mentions.total}건 기준)</span></p>
+        <p><b>대화 점유</b> · ${esc(t.summary)} <span class="muted small">(파이프라인 판정: LLM 샘플 언급 ${tr.mentions.total}건 기준)</span></p>
+        <p><b>점유 집계 비교</b> · 결정적 집계(캡션 ${t.det ? t.det.captions : '—'}건${t.det && t.det.deep ? `, 2차 수집 ${t.det.deep}건 포함` : ''}): ${t.det && t.det.total ? t.det.brands.slice(0, 4).map(b => `${esc(brandName(b[0]))} ${b[1]}`).join(', ') : '없음'}
+          · LLM 샘플: ${tr.mentions.rows.slice(0, 4).map(b => `${esc(brandName(b[0]))} ${b[1]}`).join(', ') || '없음'}</p>
         <p><b>이 니즈에 맞는 제품 보유</b> ${t.brands.map(b => `<span class="chip">${esc(String(b).toUpperCase())}</span>`).join('') || '<span class="muted">없음</span>'}</p>
         <p><b>캡션 언급</b> ${t.mentions.map(m => { const f = chipFail(m); return `<span class="chip out ${f.length ? 'chip-fail' : ''}" ${f.length ? `title="${esc(failTip(f))}" data-track="review_badge_hover"` : ''}>${esc(String(m).toUpperCase())}</span>`; }).join('')}</p>
         <details data-track="evidence_open" data-kw="${esc(t.kw)}" open><summary><b>SNS 근거</b> ${spons ? `<span class="muted small">협찬 ${spons}/${t.evidence.length}</span>` : ''} ${reviewTag(byKind('evidence'), '근거 검토')}</summary>
@@ -312,9 +350,14 @@
   }
 
   // ── 페이지: 브랜드 ──
+  let brandSrc = 'det';
   function pageBrands(mode, k) {
     const ws = periodWeeks(mode, k);
-    const m = {}; ws.forEach(w => Object.entries(w.matrix).forEach(([b, r]) => Object.entries(r).forEach(([kw, n]) => { (m[b] = m[b] || {})[kw] = (m[b][kw] || 0) + n; })));
+    const m = {};
+    ws.forEach(w => {
+      if (brandSrc === 'det') w.trends.forEach(t => (t.det ? t.det.brands : []).forEach(([b, n]) => { (m[b] = m[b] || {})[t.kw] = (m[b][t.kw] || 0) + n; }));
+      else Object.entries(w.matrix).forEach(([b, r]) => Object.entries(r).forEach(([kw, n]) => { (m[b] = m[b] || {})[kw] = (m[b][kw] || 0) + n; }));
+    });
     const kwTot = {}; Object.values(m).forEach(r => Object.entries(r).forEach(([kw, n]) => kwTot[kw] = (kwTot[kw] || 0) + n));
     const kws = Object.keys(kwTot).sort((a, b) => kwTot[b] - kwTot[a]).slice(0, 10);
     const totals = Object.entries(m).map(([b, r]) => [b, sum(Object.values(r))]).sort((a, b) => b[1] - a[1]);
@@ -327,8 +370,14 @@
       ${top.map(([b, t]) => `<tr><td><b>${esc(brandName(b))}</b></td>${kws.map(x => { const c = m[b][x] || 0; const a = c ? .12 + .7 * c / vmax : 0;
         return `<td class="c" style="background:rgba(73,80,87,${a.toFixed(2)});color:${a > .5 ? '#fff' : '#333'}">${c || ''}</td>`; }).join('')}
         <td class="num">${t}</td><td class="num">${pct(t / all)}</td></tr>`).join('')}</tbody></table></div>` : empty('언급된 K-뷰티 브랜드 없음');
+    const srcSeg = `<div class="seg small-seg" style="margin-bottom:12px">${[['det', '결정적 집계 (캡션 전체)'], ['llm', 'LLM 샘플']].map(([v, l]) =>
+      `<button data-src="${v}" class="${brandSrc === v ? 'on' : ''}" data-track="brand_source">${l}</button>`).join('')}</div>`;
+    const srcHint = brandSrc === 'det'
+      ? `키워드가 들어간 캡션 전체에서 등록 브랜드 이름을 직접 셈(캡션당 1회, 오탐 단어 제외). 총 언급 ${sum(totals.map(t => t[1]))}건. 트렌드별 ${RULES.SHARE_TARGET_N.v}건 미만이면 점유는 참고용입니다.`
+      : `LLM이 캡션 샘플(최대 30건)에서 센 브랜드. 판매처·사람 이름·서구 브랜드 제외. 파이프라인의 기회 유형 판정이 이 값을 씁니다.`;
     const html = `
-      ${card('트렌드별 브랜드 언급', `트렌드 캡션 샘플의 K-뷰티 브랜드 언급 상위 12개${mode === 'month' ? ' (월 합계, 언급 많은 트렌드 10개)' : ''}. 판매처·사람 이름·서구 브랜드 제외. 트렌드별 언급 ${RULES.MIN_MENTIONS.v}건 미만이면 점유 판단을 보류합니다.`, heat)}
+      ${srcSeg}
+      ${card('트렌드별 브랜드 언급', `${srcHint}${mode === 'month' ? ' 월 합계, 언급 많은 트렌드 10개.' : ''}`, heat)}
       <div class="grid2">
         ${card('트렌드 대화 점유', '전체 트렌드 언급 중 브랜드별 비중(%)', '<div style="position:relative;height:300px"><canvas id="share"></canvas></div>')}
         ${card('OY 랭킹 등장 제품 수', `브랜드 상위 12 · ${last.week} 기준`, '<div style="position:relative;height:300px"><canvas id="retail"></canvas></div>')}
@@ -337,6 +386,7 @@
         co.length ? `<div class="tbl-wrap"><table><thead><tr><th>회사</th><th class="num">랭킹 제품</th><th>브랜드</th></tr></thead><tbody>
           ${co.map(([c, [n, bs]]) => `<tr><td><b>${esc(c)}</b></td><td class="num">${n}</td><td class="muted">${esc(bs.slice(0, 6).join(', '))}${bs.length > 6 ? ' …' : ''}</td></tr>`).join('')}</tbody></table></div>` : empty('데이터 없음'))}`;
     return [html, () => {
+      document.querySelectorAll('[data-src]').forEach(b => b.onclick = () => { brandSrc = b.dataset.src; render(); });
       const hbar = (id, labels, data, unit) => chart(document.getElementById(id), { type: 'bar',
         data: { labels, datasets: [{ data, backgroundColor: DARK, borderRadius: 4 }] },
         options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.raw + unit } } },
@@ -455,8 +505,10 @@
         <li><b>데이터 품질</b> — 플랫폼별 수집 건수와 빈 본문 비율. 기준에 못 미치면 LLM 단계를 돌리지 않습니다.</li>
         <li><b>규칙 검사</b> — LLM이 인용한 문장이 실제 캡션에 있는지, 언급 브랜드 수가 맞는지, 니즈가 한국어인지 대조합니다.</li>
         <li><b>LLM 판정</b> — 생성 모델(Sonnet)과 다른 모델(Opus)이 같은 캡션을 보고 주장마다 지지 / 근거 부족 / 모순으로 판정합니다.</li></ol>`)}
-      ${card(`검토 필요 ${fails.length}건`, '자동 검증 실패 항목. 해당 트렌드 카드에도 배지로 표시됩니다.', fails.length ? `<div class="tbl-wrap"><table><thead><tr><th>주차</th><th>키워드</th><th>검사</th><th>대상</th><th>사유</th><th>판정</th></tr></thead><tbody>
-        ${fails.map(f => `<tr><td>${f.week.slice(5)}</td><td>${esc(kwName(f.keyword))}</td><td>${esc(f.check_type)}</td><td>${esc(f.target)}</td><td>${esc(f.detail)}</td><td>${f.checker === 'rule' ? '규칙' : 'LLM'}</td></tr>`).join('')}
+      ${card(`검토 필요 ${fails.length}건`, '자동 검증 실패 항목. <b>규칙</b> = 코드가 원문과 문자열로 대조해 찾은 오류(인용 위조, 언급 수 과장) · <b>LLM</b> = 다른 모델(Opus)이 뜻을 따져 찾은 오류(판매처·사람을 브랜드로 셈, 다른 제품을 근거로 연결). 원문 사유는 설명에 마우스를 올리면 보입니다.',
+        fails.length ? `<div class="tbl-wrap"><table><thead><tr><th>주차</th><th>키워드</th><th>판정</th><th>유형</th><th>무엇이 틀렸나</th></tr></thead><tbody>
+        ${fails.map(f => `<tr><td>${f.week.slice(5)}</td><td><b>${esc(kwName(f.keyword))}</b></td><td>${f.checker === 'rule' ? '규칙' : 'LLM'}</td>
+          <td>${tag(esc(FAIL_TYPE[f.check_type] || f.check_type), 'review')}</td><td title="${esc(`[${f.check_type}] ${f.target}: ${f.detail}`)}">${esc(failPlain(f))}</td></tr>`).join('')}
         </tbody></table></div>` : empty('없음'))}`, () => {
       if (!vw.length) return;
       const r = w => { const x = valid([w]); return [x.ruleRate, x.llmRate].map(y => y === null ? null : +(y * 100).toFixed(1)); };
@@ -484,6 +536,7 @@
         <p><b>트렌드 모양 표시</b> ⇈ 급등+지속 = 지속 상승이면서 z ≥ ${RULES.SURGE_Z.v} · ↑ 급등 · ↗ 지속 · ＋ 신규 · → 정체. z < ${RULES.SURGE_Z.v}이면 '완만한 상승'으로 집계(z가 음수여도 지속 상승 기준으로 선정된 경우)</p>
         <p><b>협찬 근거</b> 인용문에 ${esc('#ad, #sponsored, partner, #광고, [광고], 쿠팡 파트너스, supported by, gifted, 할인 코드·promo code')} 패턴이 있으면 '협찬' 태그(삭제하지 않음). 근거가 모두 협찬이면 '오가닉 근거 없음'</p>
         <p><b>판단 근거 한 줄</b> 같은 주차에서 제안 문장이 키워드만 다르고 2개 이상 같으면 표시. 선행 = 먼저 반응이 커진 플랫폼 · TikTok·YouTube 동시 = 두 플랫폼 모두에서 언급 · 1위 브랜드 점유 = K-브랜드 언급 중 1위 비중 · 협찬 근거 = 협찬 인용 수 / 전체 인용 수</p>
+        <p><b>표본과 신뢰구간</b> 점유 막대는 결정적 집계(키워드가 들어간 이번 주 캡션 전체에서 등록 브랜드 이름·별칭을 단어 경계로 셈, 캡션당 1회)를 씁니다. 1위 점유 옆 범위는 Wilson 95% 구간입니다. 일반 단어와 겹쳐 제외한 브랜드명: ${esc((D.brand_stopwords || []).join(', '))}. 파이프라인의 기회 유형 판정은 LLM 샘플 기준 그대로이며, 카드 상세에서 두 집계를 비교할 수 있습니다.</p>
         <p><b>레이더 구분선</b> 가로 ${RULES.SUSTAIN_MOMENTUM.v}배(지속 기준) · 세로 z ${RULES.SURGE_Z.v}(급등 기준). 오른쪽 위 = 강하게 뜨는 중, 오른쪽 아래 = 꾸준히 오르는 중, 왼쪽 위 = 한 주 반짝</p>`)}
       ${card('제품 전략 (VOC 4분면)', '', `<p>긍정 = VOC 긍정률 ≥ 0.65 또는 리테일 점수 ≥ 0.7 · 상승 = 별점 상승 · 불만 = 별점 하락 또는 부정 ≥ 0.35. <b>PUSH NOW</b> 긍정 + 상승 + 불만 없음 · <b>FIX & PUSH</b> 불만 · <b>HOLD</b> 긍정이나 정체 · <b>MONITOR</b> 그 외. 리뷰 유입(누적 증가분)은 거의 항상 양수라 분류에 쓰지 않고 표시만 합니다.</p>`)}
       ${card('방한 추천', '', `<p>Pick Score = 0.35 × SNS 트렌드 강도 + 0.35 × VOC 긍정도 + 0.30 × 리테일 인기. 리테일 점수 = max(0, 1 − (순위 − 1) ÷ 100)</p>`)}

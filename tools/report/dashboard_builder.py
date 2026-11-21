@@ -47,6 +47,22 @@ def _first_sentence(text: str) -> str:
     return re.split(r"(?<=[.다])\s", (text or "").strip(), maxsplit=1)[0]
 
 
+# 결정적 브랜드 집계에서 제외할 이름: 일반 영어 단어와 같아 오탐이 나는 브랜드명
+BRAND_STOPWORDS = {"glow", "luna", "naming", "risky", "dove", "ideal", "about", "the phi", "fation", "finv"}
+
+
+def _brand_patterns(conn) -> list[tuple[re.Pattern, str]]:
+    """dim_brand 의 영문명·brand_id·aliases(3자 이상) → 단어 경계 정규식."""
+    names: dict[str, str] = {}
+    for r in conn.execute("SELECT brand_id, brand_name_en, aliases FROM dim_brand"):
+        cand = [r["brand_name_en"] or "", r["brand_id"].replace("_", " ")] + _json(r["aliases"], [])
+        for n in cand:
+            n = str(n).lower().strip()
+            if len(n) >= 3 and n not in BRAND_STOPWORDS:
+                names[n] = r["brand_id"]
+    return [(re.compile(r"(?<![a-z0-9])" + re.escape(n) + r"(?![a-z0-9])"), b) for n, b in names.items()]
+
+
 class DashboardBuilder:
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -110,6 +126,29 @@ class DashboardBuilder:
                                  WHERE week <= ? AND platform_id IN ('tiktok','youtube')
                                  GROUP BY keyword, week ORDER BY week""", (week,)):
             hist.setdefault(r["keyword"], []).append([r["week"], round(r["e"] or 0)])
+        # 결정적 집계: 키워드가 들어간 이번 주 캡션 전체(1차 raw + 2차 deep)에서 브랜드를 직접 센다 (캡션당 1회)
+        has_deep = bool(conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='fact_sns_deep'").fetchone())
+
+        def det_count(kw: str) -> dict:
+            plain = kw.replace("_", " ")
+            like = (f"%{kw.lower()}%", f"%{plain.lower()}%", f"%{kw.lower()}%")
+            sql = """SELECT post_id, content_text, hashtags FROM {t} WHERE week=?
+                     AND (LOWER(content_text) LIKE ? OR LOWER(content_text) LIKE ? OR LOWER(hashtags) LIKE ?)"""
+            rows = list(conn.execute(sql.format(t="fact_sns_raw"), (week, *like)))
+            deep = list(conn.execute(sql.format(t="fact_sns_deep") + " AND keyword=?", (week, *like, kw))) if has_deep else []
+            seen, counts, n_cap = set(), {}, 0
+            for r in rows + deep:
+                if r["post_id"] in seen:
+                    continue
+                seen.add(r["post_id"])
+                n_cap += 1
+                text = f'{r["content_text"] or ""} {r["hashtags"] or ""}'.lower()
+                for b in {bid for p, bid in self._patterns if p.search(text)}:
+                    counts[b] = counts.get(b, 0) + 1
+            top = sorted(counts.items(), key=lambda x: -x[1])
+            return {"captions": n_cap, "deep": len(deep), "total": sum(counts.values()), "brands": top[:12]}
+
         trends = []
         for r in trend_rows:
             mentions = _json(r["competitor_mentions"], {})
@@ -122,6 +161,7 @@ class DashboardBuilder:
                 "summary": r["insight_summary"] or "", "need": r["consumer_need"] or "",
                 "action": r["action_rec"] or "", "evidence": ev.get(r["keyword"], []),
                 "hist": hist.get(r["keyword"], [])[-5:],
+                "det": det_count(r["keyword"]),
             })
 
         # 브랜드 언급 (알려진 K-브랜드만) — 트렌드 행렬
@@ -196,7 +236,7 @@ class DashboardBuilder:
             "platforms": {r["platform_id"]: r["n"] for r in posts},
             "retail_platforms": {r["platform_id"]: r["n"] for r in retail},
             "validation": validation,
-            "fails": [dict(r) for r in fails],
+            "fails": [{**dict(r), "target_name": self._product_name(conn, r["target"])} for r in fails],
             "trends": trends,
             "summary": [{"kw": t["kw"], "z": t["z"], "shape": t["shape"], "need": _first_sentence(t["need"])}
                         for t in trends[:3]],
@@ -208,8 +248,17 @@ class DashboardBuilder:
             "legacy": any(t["opp"] in ("amplify", "position", "counter", "new_entry") for t in trends),
         }
 
+    @staticmethod
+    def _product_name(conn, target: str) -> str | None:
+        if not re.fullmatch(r"S\d{6,}", target or ""):
+            return None
+        r = conn.execute("SELECT b.brand_name_en, p.product_name_en FROM dim_product p "
+                         "JOIN dim_brand b ON b.brand_id = p.brand_id WHERE p.product_id=?", (target,)).fetchone()
+        return f"{r[0]} {r[1]}" if r else None
+
     def build(self) -> dict:
         with self._conn() as conn:
+            self._patterns = _brand_patterns(conn)
             from agents.decision_agent import DecisionAgent
             known = DecisionAgent._known_brand_map(conn)
             names, company = {}, {}
@@ -224,6 +273,7 @@ class DashboardBuilder:
                 "brand_names": names,
                 "brand_company": {k: v for k, v in company.items() if v},
                 "meta": {"opp": OPP_META, "quad": QUAD_META, "shape": SHAPE_META},
+                "brand_stopwords": sorted(BRAND_STOPWORDS),
             }
         return data
 
