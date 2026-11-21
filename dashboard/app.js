@@ -289,7 +289,7 @@
       <button class="tc-toggle" data-track="trend_card_expand" data-kw="${esc(t.kw)}">${open ? '접기 ▲' : '자세히 ▼'}</button>
       <div class="tc-more">
         <div class="kv"><span>z ${zf(t.z)} (게시물 비중)</span>${t.eng_z !== null && t.eng_z !== undefined ? `<span>engagement 비중 z ${zf(t.eng_z)}</span>` : ''}${t.top_post_share !== null && t.top_post_share !== undefined ? `<span>1위 게시물 조회수 비중 ${pct(t.top_post_share)}</span>` : ''}<span>모멘텀 ${momf(t.mom)}${tr.base ? ` (비교 기준 ${tr.base.slice(5)})` : ''}</span><span>게시물 ${fmt(t.posts)}</span><span>engagement ${engf(t.eng)}</span><span>선행 ${esc(t.lead || '—')}</span></div>
-        <p><b>대화 점유</b> · ${esc(t.summary)} <span class="muted small">(파이프라인 판정: LLM 샘플 언급 ${tr.mentions.total}건 기준)</span></p>
+        <p><b>대화 점유</b> · ${esc(t.summary)} <span class="muted small">(판정 기준: 캡션 전체 결정적 집계${t.det ? ` 언급 ${t.det.total}건` : ''})</span></p>
         <p><b>점유 집계 비교</b> · 결정적 집계(캡션 ${t.det ? t.det.captions : '—'}건${t.det && t.det.deep ? `, 트렌드 심층 수집 ${t.det.deep}건 포함` : ''}): ${t.det && t.det.total ? t.det.brands.slice(0, 4).map(b => `${esc(brandName(b[0]))} ${b[1]}`).join(', ') : '없음'}
           · LLM 샘플: ${tr.mentions.rows.slice(0, 4).map(b => `${esc(brandName(b[0]))} ${b[1]}`).join(', ') || '없음'}</p>
         <p><b>이 니즈에 맞는 제품 보유</b> ${t.brands.map(b => `<span class="chip">${esc(String(b).toUpperCase())}</span>`).join('') || '<span class="muted">없음</span>'}</p>
