@@ -18,6 +18,7 @@
     RADAR_Y_MAX:        { v: 10,  label: '레이더 세로 상한', desc: 'z-score가 이 값을 넘으면 축 위쪽 끝에 두고 실제 값을 라벨로 표시' },
     SHARE_TARGET_N:     { v: 40,  label: '점유 표본 하한', desc: '결정적 집계의 브랜드 언급이 이 값보다 적으면 점유를 "표본 부족(참고용)"으로 표시. n=40이면 점유 추정 오차가 약 ±15%p(95%)' },
     LEADER_CI_LOWER:    { v: 0.5, label: '유의한 선점', desc: '결정적 집계에서 1위 브랜드 점유의 Wilson 95% 하한이 이 값을 넘으면 "유의한 선점"' },
+    VIRAL_SHARE:        { v: 0.8, label: '단일 게시물 의존', desc: '키워드 게시물 조회수 중 1위 게시물 비중이 이 값 이상이면 관찰 중 — 바이럴 영상 하나가 신호를 만든 경우' },
   };
   const SPONSOR_RE = /(#ad\b|#sponsored|partner|#광고|\[광고\]|쿠팡\s?파트너스|supported by|gifted|할인\s?코드|discount code|promo code|use code|code\s*[:：]\s*[a-z0-9]{3,})/i;
 
@@ -83,6 +84,8 @@
     const prev = t.hist.length >= 2 ? t.hist[t.hist.length - 2] : null;
     if (prev && prev[1] > 0 && t.eng / prev[1] >= RULES.BIG_JUMP_RATIO.v)
       reasons.push(`급등 의심: ${prev[0].slice(5)} 대비 engagement ${Math.round(t.eng / prev[1])}배, 게시물 ${t.posts}건`);
+    if (t.top_post_share !== null && t.top_post_share !== undefined && t.top_post_share >= RULES.VIRAL_SHARE.v)
+      reasons.push(`단일 게시물 의존: 조회수의 ${pct(t.top_post_share)}가 게시물 1개`);
     const m = mentionsOf(w, t.kw);
     const state = m.total < RULES.MIN_MENTIONS.v ? 'hold' : reasons.length ? 'watch' : 'ok';
     if (state === 'hold') reasons.unshift(`판단 보류: K-브랜드 언급 ${m.total}건 (< ${RULES.MIN_MENTIONS.v})`);
@@ -261,9 +264,9 @@
       </div>
       <button class="tc-toggle" data-track="trend_card_expand" data-kw="${esc(t.kw)}">${open ? '접기 ▲' : '자세히 ▼'}</button>
       <div class="tc-more">
-        <div class="kv"><span>z ${zf(t.z)}</span><span>모멘텀 ${momf(t.mom)}${tr.base ? ` (비교 기준 ${tr.base.slice(5)})` : ''}</span><span>게시물 ${fmt(t.posts)}</span><span>engagement ${engf(t.eng)}</span><span>선행 ${esc(t.lead || '—')}</span></div>
+        <div class="kv"><span>z ${zf(t.z)} (게시물 비중)</span>${t.eng_z !== null && t.eng_z !== undefined ? `<span>engagement 비중 z ${zf(t.eng_z)}</span>` : ''}${t.top_post_share !== null && t.top_post_share !== undefined ? `<span>1위 게시물 조회수 비중 ${pct(t.top_post_share)}</span>` : ''}<span>모멘텀 ${momf(t.mom)}${tr.base ? ` (비교 기준 ${tr.base.slice(5)})` : ''}</span><span>게시물 ${fmt(t.posts)}</span><span>engagement ${engf(t.eng)}</span><span>선행 ${esc(t.lead || '—')}</span></div>
         <p><b>대화 점유</b> · ${esc(t.summary)} <span class="muted small">(파이프라인 판정: LLM 샘플 언급 ${tr.mentions.total}건 기준)</span></p>
-        <p><b>점유 집계 비교</b> · 결정적 집계(캡션 ${t.det ? t.det.captions : '—'}건${t.det && t.det.deep ? `, 2차 수집 ${t.det.deep}건 포함` : ''}): ${t.det && t.det.total ? t.det.brands.slice(0, 4).map(b => `${esc(brandName(b[0]))} ${b[1]}`).join(', ') : '없음'}
+        <p><b>점유 집계 비교</b> · 결정적 집계(캡션 ${t.det ? t.det.captions : '—'}건${t.det && t.det.deep ? `, 트렌드 심층 수집 ${t.det.deep}건 포함` : ''}): ${t.det && t.det.total ? t.det.brands.slice(0, 4).map(b => `${esc(brandName(b[0]))} ${b[1]}`).join(', ') : '없음'}
           · LLM 샘플: ${tr.mentions.rows.slice(0, 4).map(b => `${esc(brandName(b[0]))} ${b[1]}`).join(', ') || '없음'}</p>
         <p><b>이 니즈에 맞는 제품 보유</b> ${t.brands.map(b => `<span class="chip">${esc(String(b).toUpperCase())}</span>`).join('') || '<span class="muted">없음</span>'}</p>
         <p><b>캡션 언급</b> ${t.mentions.map(m => { const f = chipFail(m); return `<span class="chip out ${f.length ? 'chip-fail' : ''}" ${f.length ? `title="${esc(failTip(f))}" data-track="review_badge_hover"` : ''}>${esc(String(m).toUpperCase())}</span>`; }).join('')}</p>
@@ -525,9 +528,12 @@
     const rules = Object.entries(RULES).map(([k, r]) => `<tr><td><code>${k}</code></td><td>${esc(r.label)}</td><td class="num"><b>${r.v}</b></td><td>${esc(r.desc)}</td></tr>`).join('');
     return [`<div class="method">
       ${card('데이터', '', `<p>TikTok 해시태그 영상(Apify, 미국 프록시 + 영어 캡션), YouTube 키워드 영상(Data API, regionCode=US), Olive Young Global 랭킹·리뷰(Playwright), Sephora US 리뷰(Bazaarvoice). 매주 목요일 Airflow가 수집합니다.</p>`)}
+      ${card('수집과 표본', '', `<p><b>탐지용(1차)</b> — 매주 같은 검색어·해시태그로 모읍니다. YouTube는 하루 단위로 매일 수집(2026-W48부터, 무료 할당 안), TikTok은 일반 해시태그 6개 × 60건 + 브랜드 해시태그 28개 × 5건. 한 주는 목요일 실행 직전 7일(목~수)입니다.</p>
+        <p><b>해석용(트렌드 심층 수집)</b> — 트렌드가 정해진 뒤 그 키워드로 YouTube 약 100건, TikTok 28건을 더 모아 LLM 캡션 샘플과 브랜드 언급 집계에 씁니다. <b>트렌드 선정·z-score·게시물 수에는 쓰지 않습니다</b>(키워드로 검색한 결과를 탐지에 넣으면 스스로 뜨는 것처럼 보이는 순환이 생기기 때문). 검색 순위 상위라 인기·협찬 영상 쪽으로 치우칠 수 있습니다.</p>
+        <p>2026-11-21에 탐지 지표를 총량에서 비중으로 바꾸고 모든 과거 주차를 다시 분석했습니다. 이전 방식에서는 수집량이 늘어난 W19 이후 주차에 키워드 30~40개가 한꺼번에 '급등'으로 잡혔습니다.</p>`)}
       ${card('트렌드 판정 (파이프라인)', '', `<p><code>engagement</code> TikTok 조회×0.3 + 좋아요×1.0 + 댓글×2.0 · YouTube 조회×0.2 + 좋아요×1.5 + 댓글×3.0</p>
-        <p><code>z-score</code> (이번 주 − 과거 주차 평균) ÷ 표준편차. 과거 데이터 3개 주차 이상일 때 계산</p>
-        <p><code>모멘텀</code> 이번 주 ÷ 데이터가 있는 3번째 전 주차 (카드의 '비교 기준'이 이 주차)</p>
+        <p><code>z-score</code> 키워드 <b>게시물 비중</b>(그 주 전체 게시물 대비)의 z. (이번 주 − 과거 주차 평균) ÷ 표준편차, 과거 3개 데이터 주차 이상일 때 계산. 총량 대신 비중을 써서 수집량이 바뀌어도 비교되고, 게시물 수 기반이라 바이럴 영상 하나에 흔들리지 않습니다. engagement 비중 z는 카드 상세에 참고로 표시합니다.</p>
+        <p><code>모멘텀</code> 키워드 <b>engagement 비중</b>의 이번 주 ÷ 데이터가 있는 3번째 전 주차 (카드의 '비교 기준'이 이 주차)</p>
         <p>후보 = 순간 급등(z ≥ 2.0) ∪ 지속 상승(3개 데이터 주차 연속 상승 + 모멘텀 ≥ 1.5) → 광의어·브랜드명 제외 → 게시물 ≥ 5, 캡션 ≥ 3 → 최대 10개</p>`)}
       ${card('대화 점유 (기회 유형)', '', `<p>캡션 속 K-뷰티 브랜드 언급 기준(판매처·사람 이름·서구 브랜드 제외). <b>선점</b> 1위 브랜드 ≥ 50% 그리고 ≥ 3건 · <b>각축</b> 과반 브랜드 없음 · <b>공백</b> K-브랜드 언급 없음(맞는 제품이 있으면 소통 공백, 없으면 제품 공백)</p>`)}
       ${card('화면 표시 규칙', '파이프라인 판정은 바꾸지 않고, 대시보드가 data.js 값으로만 계산하는 표시 규칙입니다. 아래 값은 dashboard/app.js의 RULES 상수를 그대로 읽어 표시합니다.',

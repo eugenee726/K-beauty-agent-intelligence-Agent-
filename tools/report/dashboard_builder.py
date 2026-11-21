@@ -149,6 +149,21 @@ class DashboardBuilder:
             top = sorted(counts.items(), key=lambda x: -x[1])
             return {"captions": n_cap, "deep": len(deep), "total": sum(counts.values()), "brands": top[:12]}
 
+        def top_share(kw: str):
+            """1차 수집 원문에서 키워드가 들어간 게시물 조회수 중 1위 게시물 비중 (단일 게시물 의존 판단용)."""
+            plain = kw.replace("_", " ")
+            views = [r[0] or 0 for r in conn.execute(
+                """SELECT view_count FROM fact_sns_raw WHERE week=? AND (LOWER(content_text) LIKE ?
+                   OR LOWER(content_text) LIKE ? OR LOWER(hashtags) LIKE ?)""",
+                (week, f"%{kw.lower()}%", f"%{plain.lower()}%", f"%{kw.lower()}%"))]
+            tot = sum(views)
+            return round(max(views) / tot, 3) if tot else None
+
+        cols_sig = {r[1] for r in conn.execute("PRAGMA table_info(fact_sns_signals)")}
+        eng_z = {r[0]: round(r[1], 2) for r in conn.execute(
+            "SELECT keyword, MAX(eng_z) FROM fact_sns_signals WHERE week=? GROUP BY keyword", (week,))} \
+            if "eng_z" in cols_sig else {}
+
         trends = []
         for r in trend_rows:
             mentions = _json(r["competitor_mentions"], {})
@@ -162,6 +177,8 @@ class DashboardBuilder:
                 "action": r["action_rec"] or "", "evidence": ev.get(r["keyword"], []),
                 "hist": hist.get(r["keyword"], [])[-5:],
                 "det": det_count(r["keyword"]),
+                "top_post_share": top_share(r["keyword"]),
+                "eng_z": eng_z.get(r["keyword"]),
             })
 
         # 브랜드 언급 (알려진 K-브랜드만) — 트렌드 행렬
