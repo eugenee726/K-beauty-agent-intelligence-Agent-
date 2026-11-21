@@ -56,6 +56,10 @@ def kbeauty_weekly():
         result = orchestrator().run_collect(only=[platform])
         key = "retail_records" if platform == "oy_global" else "sns_records"
         if not result.get(key):
+            if platform == "tiktok":
+                # TikTok 은 외부 유료 수집기(Apify) 한도·결제로 막힐 수 있다. 실패로 올리면 뒤 단계가 모두 멈추므로
+                # skip 으로 표시하고 YouTube·리테일로 분석을 이어간다 (품질 검사에서 경고로 남김).
+                raise AirflowSkipException(f"tiktok 수집 0건 — Apify 한도·결제 확인 필요: {result}")
             # CollectionAgent 는 플랫폼 오류를 삼키고 0건을 반환하므로 여기서 실패로 올린다
             raise RuntimeError(f"{platform} 수집 0건: {result}")
         return result
@@ -79,7 +83,10 @@ def kbeauty_weekly():
         report = check_week("db/kbeauty.db", status["week"])
         if not report.ok:
             raise ValueError(f"데이터 품질 검사 실패 {status['week']}: {report.failures}")
-        return report.counts
+        if report.warnings:
+            import logging
+            logging.getLogger("data_quality").warning(f"{status['week']} 품질 경고(계속 진행): {report.warnings}")
+        return {**report.counts, "warnings": report.warnings}
 
     @task(trigger_rule="none_failed", execution_timeout=timedelta(minutes=45))
     def analyze(status: dict) -> None:

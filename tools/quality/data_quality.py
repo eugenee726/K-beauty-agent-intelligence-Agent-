@@ -19,6 +19,9 @@ MIN_ROWS = {
     ("fact_sns_raw", "youtube"):        100,
     ("fact_retail_rankings", None):     10,
 }
+# 미달이어도 파이프라인을 멈추지 않고 경고만 남기는 항목.
+# TikTok 은 외부 유료 수집기(Apify) 한도·결제 문제로 막힐 수 있어, 그 주는 YouTube·리테일로 분석을 이어간다.
+OPTIONAL = {("fact_sns_raw", "tiktok")}
 
 
 @dataclass
@@ -26,6 +29,7 @@ class QualityReport:
     week: str
     counts: dict = field(default_factory=dict)
     failures: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -49,7 +53,8 @@ def check_week(db_path: str, week: str) -> QualityReport:
                 label = table
             report.counts[label] = n
             if n < minimum:
-                report.failures.append(f"{label}: {n}건 < 최소 {minimum}건")
+                msg = f"{label}: {n}건 < 최소 {minimum}건"
+                (report.warnings if (table, platform) in OPTIONAL else report.failures).append(msg)
 
         # 같은 주차·플랫폼에서 본문이 비어 있는 SNS 게시물 비율
         empty, total = conn.execute(
