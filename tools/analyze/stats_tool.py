@@ -4,7 +4,8 @@ stats_tool.py
 통계 분석 툴.
 
 수행 기능:
-  A) Z-score 이상 탐지 — 이번 주 engagement가 평균 대비 얼마나 튀는가?
+  A) Z-score 이상 탐지 — 이번 주 키워드 게시물 비중(그 주 전체 게시물 대비)이 과거 평균 대비 얼마나 튀는가?
+     (총량 대신 비중을 써서 수집량 변화에 흔들리지 않게 함. engagement 비중 z 는 eng_z 로 별도 계산)
      → z ≥ Z_ALERT(2.0) : is_anomaly (LLM·Decision 후보는 post_count 하한 추가)
   B) Growth Rate 가속도 — 성장률의 성장률 (2차 도함수)
   C) Cross-platform 상관 계수 — TikTok ↔ YouTube 키워드 동조화
@@ -102,6 +103,23 @@ class StatsTool:
 
         df = self.aggregate_signals_by_keyword(df)
 
+        # 탐지 지표 정규화: 수집량이 주마다 달라도 비교되도록 '그 주 전체 대비 비중'으로 본다.
+        #   z_score = 키워드 게시물 비중의 z  (게시물 수 기반 → 바이럴 1건에 흔들리지 않음)
+        #   eng_z   = 키워드 engagement 비중의 z (표시용)
+        with self._conn() as conn:
+            post_total = dict(conn.execute(
+                "SELECT week, COUNT(*) FROM fact_sns_raw WHERE platform_id IN ('tiktok','youtube') GROUP BY week"
+            ).fetchall())
+        eng_total = df.groupby("week")["engagement_score"].sum().to_dict()
+        df["post_share"] = df.apply(lambda r: (r["post_count"] or 0) / post_total[r["week"]]
+                                    if post_total.get(r["week"]) else 0.0, axis=1)
+        df["eng_share"] = df.apply(lambda r: (r["engagement_score"] or 0) / eng_total[r["week"]]
+                                   if eng_total.get(r["week"]) else 0.0, axis=1)
+
+        def _z(cur, hist):
+            sd = float(np.std(hist, ddof=1)) if len(hist) >= 2 else 0.0
+            return float((cur - float(np.mean(hist))) / sd) if sd > 0 else 0.0
+
         results = []
         for keyword, grp in df.groupby("keyword"):
             grp = grp.sort_values("week")
@@ -111,17 +129,19 @@ class StatsTool:
             if current.empty:
                 continue
 
-            current_score = float(current["engagement_score"].iloc[0])
+            current_score = float(current["post_share"].iloc[0])
             current_gr    = current["growth_rate"].iloc[0]
             current_post_count = int(current["post_count"].iloc[0])
+            eng_z = 0.0
 
             if len(history) >= 3:
-                hist_scores = history["engagement_score"].values
+                hist_scores = history["post_share"].values
                 mean_h  = float(np.mean(hist_scores))
                 std_h   = float(np.std(hist_scores, ddof=1))
-                z_score = float((current_score - mean_h) / std_h) if std_h > 0 else 0.0
+                z_score = _z(current_score, hist_scores)
+                eng_z   = _z(float(current["eng_share"].iloc[0]), history["eng_share"].values)
 
-                last4 = history.tail(4)["engagement_score"].values
+                last4 = history.tail(4)["post_share"].values
                 if len(last4) >= 2:
                     _, p_val = stats.ttest_ind(
                         [current_score], last4, equal_var=False
@@ -143,10 +163,11 @@ class StatsTool:
                 "week":          week,
                 "platform_id":   CROSS_PLATFORM_ID,
                 "keyword":       keyword,
-                "current_score": round(current_score, 1),
-                "mean_hist":     round(mean_h, 1),
-                "std_hist":      round(std_h, 1),
+                "current_score": round(current_score, 5),
+                "mean_hist":     round(mean_h, 5),
+                "std_hist":      round(std_h, 5),
                 "z_score":       round(z_score, 2),
+                "eng_z":         round(eng_z, 2),
                 "is_anomaly":    1 if z_score >= self.Z_ALERT else 0,
                 "growth_rate":   current_gr,
                 "growth_accel":  round(growth_accel, 1) if growth_accel else None,
@@ -164,10 +185,12 @@ class StatsTool:
                 existing = [r[1] for r in conn.execute("PRAGMA table_info(fact_sns_signals)").fetchall()]
                 if "z_score" not in existing:
                     conn.execute("ALTER TABLE fact_sns_signals ADD COLUMN z_score REAL DEFAULT 0.0")
+                if "eng_z" not in existing:
+                    conn.execute("ALTER TABLE fact_sns_signals ADD COLUMN eng_z REAL DEFAULT 0.0")
                 for _, row in df.iterrows():
                     conn.execute(
-                        "UPDATE fact_sns_signals SET z_score=? WHERE week=? AND keyword=?",
-                        (row["z_score"], row["week"], row["keyword"]),
+                        "UPDATE fact_sns_signals SET z_score=?, eng_z=? WHERE week=? AND keyword=?",
+                        (row["z_score"], row["eng_z"], row["week"], row["keyword"]),
                     )
 
         return df

@@ -51,6 +51,10 @@ GENERIC_QUERIES: list[str] = [
     "kbeauty", "k-beauty skincare", "korean skincare routine",
     "korean beauty", "kbeauty review", "kbeauty haul", "oliveyoung",
     "skincare routine", "skincare product", "skincare review", "skincare haul",
+    # 성분·니즈 일반어 (탐지 표본 틀 고정 — 트렌드에 따라 바꾸지 않는다)
+    "korean sunscreen", "niacinamide serum", "snail mucin", "centella skincare", "retinol korean skincare",
+    "toner pad", "korean lip tint", "cushion foundation", "pore care skincare", "acne korean skincare",
+    "skin barrier repair", "pdrn skincare", "rice toner", "eye cream korean", "glass skin routine",
 ]
 
 

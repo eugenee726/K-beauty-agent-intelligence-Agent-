@@ -103,6 +103,11 @@ class MomentumTool:
         if sns_all.empty:
             return pd.DataFrame()
 
+        # 수집량 변화(검색어 추가·일간 수집·해시태그 수량 조정)에 흔들리지 않도록
+        # engagement 를 그 주 전체 키워드 engagement 대비 비중으로 바꿔 추세를 본다.
+        week_total = sns_all.groupby("week")["engagement"].transform("sum")
+        sns_all["engagement"] = sns_all["engagement"] / week_total.where(week_total > 0, 1)
+
         # 키워드별 최상위 플랫폼 / 활성 플랫폼
         lead_map: dict[str, str] = {}
         active_map: dict[str, set] = {}

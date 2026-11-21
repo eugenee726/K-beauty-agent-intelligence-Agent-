@@ -178,9 +178,9 @@ class TikTokTool:
         skipped_lang = 0
         for hashtag in self.TARGET_HASHTAGS:
             logger.info(f"TikTok 수집: #{hashtag}")
-            # 비용 대비 효과: 트렌드를 처음 잡는 일반 해시태그는 많이, 브랜드 해시태그는 적게
+            # 주 약 780건(월 Apify 한도 $19 안): 탐지 = 일반 6×60 + 브랜드 28×5, 해석 = 트렌드 심층 수집 10×28
             n_items = (int(os.getenv("TIKTOK_GENERIC_ITEMS", "60")) if hashtag in GENERIC_HASHTAGS
-                       else int(os.getenv("TIKTOK_BRAND_ITEMS", "10")))
+                       else int(os.getenv("TIKTOK_BRAND_ITEMS", "5")))
             videos = self._fetch_from_apify(
                 hashtag, max_items=n_items, published_after=published_after
             )

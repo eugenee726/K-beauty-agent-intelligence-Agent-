@@ -7,7 +7,7 @@ deep_collect.py
     5~37건뿐이라, 소비자 니즈 해석과 브랜드 언급 집계의 표본이 너무 작다.
 
 - YouTube: "{키워드} korean skincare" 검색 2페이지(최대 100건). 무료 API 할당 안에서 동작.
-- TikTok: 키워드 해시태그(#eyecream 등) 15건. Apify 결과 건당 과금(약 $4~5/1,000건)이라 소량만.
+- TikTok: 키워드 해시태그(#eyecream 등) 28건. Apify 결과 건당 과금(약 $4~5/1,000건)이라 소량만.
 - 저장: fact_sns_deep (fact_sns_raw 와 분리). 트렌드 탐지(z-score)와 KPI 게시물 수에는 쓰지 않고,
   LLM 캡션 샘플과 결정적 브랜드 집계에만 쓴다.
 - 1차 수집과 같은 필터: 최근 7일, 미국(US)·영어, 본문에 키워드 포함.
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS fact_sns_deep (
 
 class TrendDeepCollector:
     YT_PAGES = int(os.getenv("DEEP_YT_PAGES", "2"))       # 페이지당 50건
-    TT_ITEMS = int(os.getenv("DEEP_TT_ITEMS", "15"))   # Apify 월 한도($19) 안: 1차 6×60 + 28×10 + 2차 10×15 ≈ 주 790건
+    TT_ITEMS = int(os.getenv("DEEP_TT_ITEMS", "28"))   # 해석 우선 배분: 1차 6×60 + 28×5, 심층 10×28 ≈ 주 780건 (월 $19 안)
     RECENT_DAYS = 7
 
     def __init__(self, db_path: str, youtube_api_key: str | None = None, apify_token: str | None = None):

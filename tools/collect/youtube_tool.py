@@ -129,9 +129,134 @@ class YouTubeTool:
         return list(found)
 
     # ──────────────────────────────────────────
-    # 전체 파이프라인: 수집 → 집계 → DB 저장
+    # 일간 수집: 하루 단위 날짜 창으로 검색 (탐지 표본 확대, 무료 할당 안)
     # ──────────────────────────────────────────
+    DAILY_LOG_SQL = """CREATE TABLE IF NOT EXISTS yt_daily_log (
+        day TEXT PRIMARY KEY, queries INTEGER, stored INTEGER, collected_at TEXT DEFAULT (datetime('now')))"""
+
+    @staticmethod
+    def run_week_of(day) -> str:
+        """day 를 분석하는 주간 실행일(그 다음 목요일)의 ISO 주차. 목요일 당일 게시물은 다음 주 실행에 들어간다."""
+        ahead = (3 - day.weekday()) % 7 or 7
+        return (day + timedelta(days=ahead)).strftime("%G-W%V")
+
+    def collect_day(self, day) -> int:
+        """
+        day(UTC 날짜)에 올라온 영상만 검색어별 1페이지 수집해 fact_sns_raw 에 저장한다.
+        날짜 창이 겹치지 않고 (platform_id, post_id) UNIQUE 라 날마다 중복되지 않는다.
+        week 는 그 날을 분석하는 주간 실행(다음 목요일)의 ISO 주차 — 예전 주간 수집처럼 '목~수 7일'이 한 주.
+        통계·신호는 주간 집계(aggregate_week)에서 다시 계산한다.
+        """
+        from datetime import date as _date
+        day = day if isinstance(day, _date) else datetime.strptime(str(day), "%Y-%m-%d").date()
+        after = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+        before = after + timedelta(days=1)
+        week = self.run_week_of(day)
+        yt = self._get_client()
+        ids, seen, n_q = [], set(), 0
+        for query in self.TARGET_QUERIES:
+            try:
+                resp = yt.search().list(
+                    q=query, part="id", type="video", maxResults=50,
+                    publishedAfter=after.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    publishedBefore=before.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    relevanceLanguage="en", regionCode="US",
+                ).execute()
+                n_q += 1
+            except Exception as e:
+                if "quota" in str(e).lower():
+                    logger.warning(f"YouTube 할당량 소진 — {day} 수집 중단 ({n_q}개 검색어까지)")
+                    break
+                logger.warning(f"YouTube 검색 실패 {query!r}: {e}")
+                continue
+            for it in resp.get("items", []):
+                vid = it.get("id", {}).get("videoId")
+                if vid and vid not in seen:
+                    seen.add(vid)
+                    ids.append(vid)
+        stored = 0
+        with self._conn() as conn:
+            for v in self._fetch_video_stats(ids):
+                engagement = v["views"] * 0.2 + v["likes"] * 1.5 + v["comments"] * 3.0
+                if engagement < self.min_engagement or not self._extract_keywords(v["title"], v["description"], v["tags"]):
+                    continue
+                content_text = f"{v['title']} {v['description']}".strip()
+                cur = conn.execute("""INSERT OR IGNORE INTO fact_sns_raw
+                        (week, platform_id, post_id, content_text, hashtags, view_count, like_count)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (week, self.PLATFORM_ID, v["video_id"], content_text, json.dumps(v.get("tags", [])),
+                     v["views"], v["likes"]))
+                stored += cur.rowcount
+            conn.execute(self.DAILY_LOG_SQL)
+            if n_q == len(self.TARGET_QUERIES):   # 끝까지 수집한 날만 완료로 기록
+                conn.execute("INSERT OR REPLACE INTO yt_daily_log (day, queries, stored) VALUES (?, ?, ?)",
+                             (day.isoformat(), n_q, stored))
+        logger.info(f"YouTube 일간 수집 {day} (week={week}): 검색어 {n_q}개, 신규 저장 {stored}건")
+        return stored
+
+    def aggregate_week(self, week: str) -> int:
+        """
+        그 주 YouTube 원문 전체의 통계를 한 번에 다시 조회해(측정 시점 통일) 키워드 신호를 다시 만든다.
+        fact_sns_signals(youtube, week) 를 지우고 새로 쓴다.
+        """
+        with self._conn() as conn:
+            ids = [r[0] for r in conn.execute(
+                "SELECT post_id FROM fact_sns_raw WHERE week=? AND platform_id=?", (week, self.PLATFORM_ID))]
+        records = []
+        with self._conn() as conn:
+            for v in self._fetch_video_stats(ids):
+                conn.execute("UPDATE fact_sns_raw SET view_count=?, like_count=? WHERE platform_id=? AND post_id=?",
+                             (v["views"], v["likes"], self.PLATFORM_ID, v["video_id"]))
+                engagement = v["views"] * 0.2 + v["likes"] * 1.5 + v["comments"] * 3.0
+                if engagement < self.min_engagement:
+                    continue
+                for kw in self._extract_keywords(v["title"], v["description"], v["tags"]):
+                    records.append({"keyword": kw, "views": v["views"], "likes": v["likes"],
+                                    "comments": v["comments"], "eng": engagement})
+        if not records:
+            logger.warning(f"YouTube 주간 집계 {week}: 유효 레코드 없음")
+            return 0
+        agg = pd.DataFrame(records).groupby("keyword").agg(
+            post_count=("eng", "count"), total_views=("views", "sum"), total_likes=("likes", "sum"),
+            total_comments=("comments", "sum"), engagement_score=("eng", "sum")).reset_index()
+        with self._conn() as conn:
+            conn.execute("DELETE FROM fact_sns_signals WHERE week=? AND platform_id=?", (week, self.PLATFORM_ID))
+            for _, r in agg.iterrows():
+                is_new = 0 if conn.execute(
+                    "SELECT 1 FROM fact_sns_signals WHERE platform_id=? AND keyword=? AND week<?",
+                    (self.PLATFORM_ID, r["keyword"], week)).fetchone() else 1
+                conn.execute("""INSERT INTO fact_sns_signals
+                        (week, platform_id, keyword, post_count, total_views, total_likes, total_comments,
+                         engagement_score, growth_rate, is_new_keyword)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+                    (week, self.PLATFORM_ID, r["keyword"], int(r["post_count"]), int(r["total_views"]),
+                     int(r["total_likes"]), int(r["total_comments"]), float(r["engagement_score"]), is_new))
+        logger.info(f"YouTube 주간 집계 {week}: 영상 {len(ids)}개 → 키워드 {len(agg)}개")
+        return len(agg)
+
     def fetch_and_store(self, week: str = None) -> int:
+        """
+        주간 수집 인터페이스 (Airflow collect_youtube).
+        이번 주에 일간 수집이 빠진 날을 채운 뒤(할당량 안에서) 주간 집계를 다시 만든다.
+        일간 수집 기록이 전혀 없으면 예전 방식(최근 7일 검색)으로 수집한다.
+        """
+        week = week or self._current_week()
+        with self._conn() as conn:
+            conn.execute(self.DAILY_LOG_SQL)
+            done = {r[0] for r in conn.execute("SELECT day FROM yt_daily_log")}
+        y, w = week.split("-W")
+        thursday = datetime.fromisocalendar(int(y), int(w), 4).date()   # 그 주 실행일
+        today = datetime.now(tz=timezone.utc).date()
+        days = [thursday - timedelta(days=i) for i in range(7, 0, -1) if thursday - timedelta(days=i) < today]
+        if any(d.isoformat() in done for d in days):
+            for d in days:
+                if d.isoformat() not in done:
+                    self.collect_day(d)
+            return self.aggregate_week(week)
+        return self._fetch_and_store_weekly(week)
+
+    # 예전 방식: 최근 7일 검색 1회 (일간 수집 도입 전 주차, 일간 기록이 없을 때)
+    def _fetch_and_store_weekly(self, week: str = None) -> int:
         """
         Collection Agent 호출 인터페이스.
         반환: 저장된 신규 레코드 수
