@@ -9,6 +9,8 @@
   // ── 화면 표시 규칙 (방법론 페이지가 이 객체를 그대로 렌더링) ──
   const RULES = {
     LOW_SAMPLE_POSTS:   { v: 10,  label: '표본 부족', desc: '이번 주 게시물이 이 값보다 적으면 관찰 중' },
+    HISTORY_GRACE_FROM:  { v: '2026-W47', label: '초기 운영 유예 시작', desc: '운영 재개 주차. 이 주차부터 HISTORY_GRACE_UNTIL까지만 유예' },
+    HISTORY_GRACE_UNTIL: { v: '2026-W48', label: '초기 운영 유예', desc: '이 주차까지는 연속 수집 이력 경고(이력 짧음)를 판단에서 제외. YouTube 매일 수집으로 연속 3주가 쌓이는 W49부터 원래 기준 적용. 다른 경고는 그대로' },
     MIN_CONSEC_WEEKS:   { v: 3,   label: '이력 짧음', desc: '이번 주까지 끊김 없이 이어진 ISO 주차 수가 이 값보다 적으면 관찰 중 (예: W45→W47은 W46이 없어 끊김)' },
     BIG_JUMP_RATIO:     { v: 10,  label: '급등 의심', desc: '직전 데이터 주차 대비 engagement가 이 배수 이상이면 관찰 중. 주차별 게시물 수가 데이터에 없어 게시물당 값 대신 총량으로 비교하고, 게시물 수를 함께 표시' },
     MIN_MENTIONS:       { v: 5,   label: '판단 보류', desc: '트렌드 캡션 전체에서 센 브랜드 언급 합계가 이 값보다 적으면 대화 점유(우세·각축·공백)를 판단하지 않음' },
@@ -81,15 +83,20 @@
     const rows = Object.entries(w.matrix).map(([b, r]) => [b, r[kw] || 0]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]);
     return { total: sum(rows.map(r => r[1])), rows };
   }
+  const inGrace = wk => wk >= RULES.HISTORY_GRACE_FROM.v && wk <= RULES.HISTORY_GRACE_UNTIL.v;
   function trustOf(w, t) {
-    const reasons = [];
+    const reasons = [], notes = [];
     if (t.posts < RULES.LOW_SAMPLE_POSTS.v) reasons.push(`표본 부족: 게시물 ${t.posts}건 (< ${RULES.LOW_SAMPLE_POSTS.v})`);
     let run = 0;
     for (let i = t.hist.length - 1; i >= 0; i--) {
       if (i === t.hist.length - 1) { run = t.hist[i][0] === w.week ? 1 : 0; if (!run) break; continue; }
       if (weekOrd(t.hist[i + 1][0]) - weekOrd(t.hist[i][0]) === 1) run++; else break;
     }
-    if (run < RULES.MIN_CONSEC_WEEKS.v) reasons.push(`이력 짧음: 연속 ${run}주 (< ${RULES.MIN_CONSEC_WEEKS.v}) — ${t.hist.map(h => h[0].slice(5)).join('→')}`);
+    if (run < RULES.MIN_CONSEC_WEEKS.v) {
+      const msg = `이력 짧음: 연속 ${run}주 (< ${RULES.MIN_CONSEC_WEEKS.v}) — ${t.hist.map(h => h[0].slice(5)).join('→')}`;
+      // 초기 운영 기간에는 이력 경고만 유예 (판단에서 빼고 참고 문구로 표시)
+      if (inGrace(w.week)) notes.push(`초기 운영 유예 · ${msg}`); else reasons.push(msg);
+    }
     const prev = t.hist.length >= 2 ? t.hist[t.hist.length - 2] : null;
     if (prev && prev[1] > 0 && t.eng / prev[1] >= RULES.BIG_JUMP_RATIO.v)
       reasons.push(`급등 의심: ${prev[0].slice(5)} 대비 engagement ${Math.round(t.eng / prev[1])}배, 게시물 ${t.posts}건`);
@@ -101,7 +108,7 @@
     const state = nMention < RULES.MIN_MENTIONS.v ? 'hold' : reasons.length ? 'watch' : 'ok';
     if (state === 'hold') reasons.unshift(`판단 보류: K-브랜드 언급 ${nMention}건 (< ${RULES.MIN_MENTIONS.v})`);
     const base = t.hist.length >= 3 ? t.hist[t.hist.length - 3][0] : null;
-    return { state, reasons, mentions: m, base };
+    return { state, reasons, notes, mentions: m, base };
   }
   const isSponsor = e => SPONSOR_RE.test(e);
   // Wilson 95% 구간
@@ -191,7 +198,7 @@
   const card = (title, hint, body, extra = '') => `<section class="card" ${extra}><h3>${title}</h3>${hint ? `<div class="hint">${hint}</div>` : ''}${body}</section>`;
   const empty = msg => `<div class="empty">${msg}</div>`;
   const tag = (label, cls = '', tip = '', attrs = '') => `<span class="tag ${cls}" ${tip ? `title="${esc(tip)}"` : ''} ${attrs}>${label}</span>`;
-  const trustTag = tr => tag(TRUST[tr.state].label, 'trust ' + TRUST[tr.state].cls, tr.reasons.join('\n') || '경고 없음');
+  const trustTag = tr => tag(TRUST[tr.state].label, 'trust ' + TRUST[tr.state].cls, [...tr.reasons, ...(tr.notes || [])].join('\n') || '경고 없음');
   const shapeTag = t => { const s = shapeView(t); return tag(`${s.icon} ${s.label}`, 'shape'); };
   const reviewTag = (fs, label) => fs.length ? tag(`${label || '검토 필요'} ${fs.length}`, 'review', failTip(fs), 'data-track="review_badge_hover"') : '';
   const snapNote = (mode, ws) => mode === 'month' ? `<div class="hint">월간 보기: 이 화면은 월의 마지막 데이터 주차(${ws[ws.length - 1].week}) 기준입니다.</div>` : '';
@@ -221,7 +228,7 @@
         <div class="need">${esc(firstSentence(x.t.need))}</div></li>`; };
     const html = `
       <div class="grid-main tight">
-        ${card(mode === 'week' ? '이번 주 판단' : '이번 달 판단', `'판단 가능' 트렌드 중 z-score 상위 3개. 판단 가능 = 표본·이력·급등 경고 없음 + K-브랜드 언급 ${RULES.MIN_MENTIONS.v}건 이상 (방법론 › 화면 표시 규칙)`,
+        ${card(mode === 'week' ? '이번 주 판단' : '이번 달 판단', `'판단 가능' 트렌드 중 z-score 상위 3개. 판단 가능 = 표본·이력·급등 경고 없음 + K-브랜드 언급 ${RULES.MIN_MENTIONS.v}건 이상 (방법론 › 화면 표시 규칙)${inGrace(last.week) ? ` · <b>초기 운영 기간(${RULES.HISTORY_GRACE_FROM.v.slice(5)}~${RULES.HISTORY_GRACE_UNTIL.v.slice(5)}): 연속 수집 이력 기준 유예</b>` : ''}`,
           ok.length ? `<ol class="judge">${ok.map(line).join('')}</ol>`
             : `<div class="empty left">판단 가능한 트렌드가 없습니다. 모든 트렌드에 경고가 있어 아래 '관찰 중'에 모았습니다.<br>
                <span class="muted">${last.week === WEEKS[WEEKS.length - 1].week
@@ -630,7 +637,7 @@
           `<div class="badges">
              <div>${mini('판단 보류', 'trust hold')}<span>브랜드 언급 ${RULES.MIN_MENTIONS.v}건 미만</span></div>
              <div>${mini('관찰 중', 'trust watch')}<span>게시물 ${RULES.LOW_SAMPLE_POSTS.v}건 미만 · 연속 수집 ${RULES.MIN_CONSEC_WEEKS.v}주 미만 · engagement ${RULES.BIG_JUMP_RATIO.v}배 급등 · 조회수 ${pct(RULES.VIRAL_SHARE.v)} 이상이 게시물 1개</span></div>
-             <div>${mini('판단 가능', 'trust ok')}<span>경고 없음</span></div>
+             <div>${mini('판단 가능', 'trust ok')}<span>경고 없음 · ${RULES.HISTORY_GRACE_FROM.v.slice(5)}~${RULES.HISTORY_GRACE_UNTIL.v.slice(5)}는 초기 운영 기간이라 연속 수집 이력 경고만 유예</span></div>
              <div>${mini('검토 필요', 'review')}<span>자동 검증 실패 항목 있음 (카드 안 표시)</span></div>
            </div>`)}
         ${card('검증', `LLM 출력의 주장마다 검사 · ${esc(w.week)} 결과`,
