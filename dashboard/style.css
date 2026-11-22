@@ -259,3 +259,6 @@ details.card summary { cursor: pointer; }
 .q3 .mon { grid-column: 2 / 4; }
 
 .page-desc { color: var(--ink-2); font-size: 14px; margin-top: 4px; }
+
+.brand-desc { font-size: 12px; font-weight: 400; word-break: keep-all; color: var(--muted); line-height: 1.5; margin-top: 8px; }
+@media (max-width: 900px) { .brand-desc { display: none; } }
