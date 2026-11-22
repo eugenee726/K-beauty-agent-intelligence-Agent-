@@ -1,43 +1,49 @@
-# ── Python ──────────────────────────────
+# ── 화이트리스트 방식 ─────────────────────────────
+# 저장소 루트의 모든 것을 기본으로 제외하고, 아래에 적은 것만 올린다.
+# 새 파일·폴더를 공개하려면 여기에 직접 추가해야 한다 (실수로 비공개 자료가 올라가는 것 방지).
+/*
+
+# 실행·설치에 필요한 루트 파일
+!/.gitignore
+!/.env.example
+!/README.md
+!/requirements.txt
+!/main.py
+!/init_db.py
+!/env_loader.py
+
+# 코드
+!/agents/
+!/tools/
+!/memory/
+!/airflow/
+!/dashboard/
+!/docs/
+!/db/
+
+# ── 허용한 폴더 안에서도 제외 ─────────────────────
+# DB는 스키마만 공개 (데이터·백업 제외)
+/db/*
+!/db/schema.sql
+
+# Airflow는 이미지·compose·DAG만 (로그·런타임 파일 제외)
+/airflow/*
+!/airflow/Dockerfile
+!/airflow/docker-compose.yaml
+!/airflow/dags/
+
+# 공개 대시보드에서 README가 쓰지 않는 이미지
+/docs/images/dashboard_trends.png
+
+# ── 어디에 있든 제외 ──────────────────────────────
 __pycache__/
 *.py[cod]
-*.egg-info/
-.pytest_cache/
-.ipynb_checkpoints/
-
-# ── 가상환경 ────────────────────────────
-venv/
-.venv/
-env/
-
-# ── 환경변수·시크릿 ─────────────────────
 .env
 *.key
-
-# ── DB (런타임 생성) ────────────────────
-db/*.db
-db/*.db-journal
-db/*.db-wal
-db/*.db-shm
-
-# ── 산출물 ──────────────────────────────
-exports/
-logs/
-
-# ── 디버그·스크린샷 ─────────────────────
-debug_*.png
+*.pem
+*.db
+*.db-*
 *.log
-
-# ── IDE / OS ────────────────────────────
-.vscode/
-.idea/
-.claude/
+*.pptx
 .DS_Store
 Thumbs.db
-
-# 문서 바이너리
-*.pptx
-db/backup/
-
-# 개인 포트폴리오 작업 폴더 (비공개)
-portfolio/
