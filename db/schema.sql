@@ -1,6 +1,6 @@
 -- ============================================================
 -- K-Beauty Intelligence Agent v3 - SQLite Schema
--- 목적: 글로벌 소비자 반응 기반 아모레퍼시픽 브랜드 기회 탐지
+-- 목적: 글로벌 소비자 반응 기반 K-뷰티 트렌드·브랜드 점유 탐지 (특정 회사 관점 없음)
 -- 타겟: 미국 시장 (Sephora US + OY Global + SNS)
 -- ============================================================
 
@@ -10,7 +10,8 @@ PRAGMA foreign_keys=ON;
 -- DIMENSION TABLES
 -- ============================================================
 
--- 아모레퍼시픽 브랜드 마스터 (13개)
+-- 브랜드 마스터. 아래 13개는 초기 시드이고, 추적 브랜드(43개)와 랭킹 브랜드는
+-- brand_registry.py 가 추가한다.
 CREATE TABLE IF NOT EXISTS dim_brand (
     brand_id      TEXT PRIMARY KEY,  -- 'laneige', 'cosrx'
     brand_name_en TEXT NOT NULL,     -- 'LANEIGE', 'COSRX'
@@ -66,9 +67,10 @@ INSERT OR IGNORE INTO dim_platform VALUES
 ('sephora_us',    'Sephora US',                'retail', 'US',     'voc',         'https://www.sephora.com');
 
 
--- 아모레퍼시픽 제품 마스터
+-- 제품 마스터 (브랜드 중립)
 -- product_id: 플랫폼 독립 서로게이트 키 (S00000001 형식)
--- 한 제품이 OY Global + Sephora 동시 입점해도 단일 row로 관리
+-- 채널 키(oy_prdtno, sephora_pid)는 각각 UNIQUE로 두고 채널별 별도 row로 관리한다.
+-- 채널 간 같은 제품 연결은 하나로 합치지 않고, 확인된 것만 별도 연결표로 둘 계획이다.
 CREATE TABLE IF NOT EXISTS dim_product (
     product_id       TEXT PRIMARY KEY,  -- 서로게이트 키: 'S00000001'
     brand_id         TEXT NOT NULL,     -- dim_brand.brand_id ('laneige', 'cosrx' 등)
@@ -236,7 +238,7 @@ CREATE TABLE IF NOT EXISTS fact_llm_insights (
 );
 
 
--- LLM 인사이트 × AP 제품 연결 테이블
+-- LLM 인사이트 × 제품 연결 테이블
 -- fact_llm_insights의 product 연결을 정규화
 CREATE TABLE IF NOT EXISTS fact_llm_insight_products (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -256,7 +258,8 @@ CREATE TABLE IF NOT EXISTS fact_llm_insight_products (
 -- FACT TABLES - DecisionAgent 출력
 -- ============================================================
 
--- Step 1 출력: SNS 트렌드 키워드 → AP 제품 연결 + 기회 유형
+-- Step 1 출력: SNS 트렌드 키워드 → 제품 연결 + 대화 점유 유형
+-- (ap_* 컬럼명은 초기 설계 이름 그대로 유지. 내용은 브랜드 중립 브랜드·제품 ID)
 CREATE TABLE IF NOT EXISTS fact_trend_insights (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     week                TEXT NOT NULL,
@@ -268,7 +271,7 @@ CREATE TABLE IF NOT EXISTS fact_trend_insights (
     is_cross_platform   INTEGER DEFAULT 0,
     ap_brand_ids        TEXT,               -- JSON: ["laneige","cosrx"]
     ap_product_ids      TEXT,               -- JSON: ["S00000001","S00000002"]
-    opportunity_type    TEXT NOT NULL,      -- 'amplify'|'position'|'counter'|'new_entry'
+    opportunity_type    TEXT NOT NULL,      -- 'leader'(우세)|'contested'(각축)|'white_space'(공백); 과거 주차엔 이전 유형이 남아 있음
     consumer_need       TEXT,
     competitor_mentions TEXT,               -- JSON: {"Anua":3,"SKIN1004":2}
     insight_summary     TEXT,
@@ -278,7 +281,7 @@ CREATE TABLE IF NOT EXISTS fact_trend_insights (
 );
 
 
--- Step 2 출력: AP 제품별 리테일 + VOC + 전략 사분면
+-- Step 2 출력: 제품별 리테일 + VOC + 전략 사분면
 CREATE TABLE IF NOT EXISTS fact_product_insights (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     week            TEXT NOT NULL,
