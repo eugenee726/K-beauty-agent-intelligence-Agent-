@@ -6,7 +6,7 @@
 
 - 대시보드: **https://eugenee726.github.io/K-beauty-agent-intelligence-Agent-/** — 정적 웹앱입니다(소스 [`dashboard/`](dashboard/), 공개본 [`docs/`](docs/)). `?w=2026-W47#trends`, `?m=2026-11#brands`처럼 URL로 기간과 화면을 고릅니다.
 - 운영: AWS Lightsail의 Apache Airflow가 매주 목요일 09:00(KST)에 전체를 실행하고, YouTube는 매일 수집합니다.
-- 범위: K-뷰티 브랜드 43개, 제품 카탈로그 1,736개. 특정 회사 관점 없이 같은 기준으로 비교합니다.
+- 범위: 추적 K-뷰티 브랜드 43개(제품 1,534개), 랭킹에 오른 브랜드까지 포함한 제품 카탈로그 1,736개. 특정 회사 관점 없이 같은 기준으로 비교합니다.
 
 ## 왜 만들었나
 
