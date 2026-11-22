@@ -38,3 +38,6 @@ Thumbs.db
 # 문서 바이너리
 *.pptx
 db/backup/
+
+# 개인 포트폴리오 작업 폴더 (비공개)
+portfolio/
