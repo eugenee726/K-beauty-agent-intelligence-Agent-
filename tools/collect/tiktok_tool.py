@@ -21,7 +21,6 @@ import logging
 import requests
 import pandas as pd
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from tools.collect.sns_terms import GENERIC_HASHTAGS, kbeauty_terms, target_hashtags
 

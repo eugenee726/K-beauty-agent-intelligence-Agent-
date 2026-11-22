@@ -12,7 +12,6 @@ google-api-python-client>=2.100.0
 # 데이터 처리
 pandas>=2.0.0
 numpy>=1.24.0
-rapidfuzz>=3.0.0
 
 # 통계 분석
 scipy>=1.11.0

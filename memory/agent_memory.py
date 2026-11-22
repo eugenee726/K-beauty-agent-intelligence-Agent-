@@ -89,65 +89,6 @@ class AgentMemory:
             ))
         logger.info(f"실행 완료: {run_id} | {status} | {stats}")
 
-    def get_last_run(self) -> dict | None:
-        """직전 실행 이력 조회. Planner가 우선순위 결정에 활용."""
-        with self._conn() as conn:
-            row = conn.execute("""
-                SELECT * FROM mem_agent_runs
-                ORDER BY run_at DESC LIMIT 1
-            """).fetchone()
-        return dict(row) if row else None
-
-    # ──────────────────────────────────────────
-    # 기준선 관리 (이상 탐지용)
-    # ──────────────────────────────────────────
-    def get_baseline(self, keyword: str, platform_id: str) -> dict | None:
-        """
-        키워드 x 플랫폼 기준선 조회 (최근 4주 평균/표준편차).
-        Stats Tool이 z-score 계산 시 사용.
-        """
-        with self._conn() as conn:
-            rows = conn.execute("""
-                SELECT engagement_score
-                FROM fact_sns_signals
-                WHERE keyword = ? AND platform_id = ?
-                ORDER BY week DESC LIMIT 4
-            """, (keyword, platform_id)).fetchall()
-
-        if len(rows) < 2:
-            return None
-
-        scores = [r["engagement_score"] for r in rows]
-        avg = sum(scores) / len(scores)
-        std = (sum((s - avg) ** 2 for s in scores) / len(scores)) ** 0.5
-        return {"avg_volume": avg, "std_volume": std}
-
-    # ──────────────────────────────────────────
-    # 첫 등장 기록 (모멘텀 추적용)
-    # ──────────────────────────────────────────
-    def record_first_seen(self, keyword: str, platform_id: str, week: str, score: float):
-        """키워드가 플랫폼에서 처음 등장했을 때 기록."""
-        with self._conn() as conn:
-            conn.execute("""
-                INSERT OR IGNORE INTO fact_trend_first_seen
-                    (keyword, platform_id, first_seen_week, initial_score)
-                VALUES (?, ?, ?, ?)
-            """, (keyword, platform_id, week, score))
-
-    def get_first_seen(self, keyword: str) -> list:
-        """
-        키워드의 플랫폼별 첫 등장 기록 조회.
-        Momentum Analyzer가 선행 플랫폼 탐지에 사용.
-        """
-        with self._conn() as conn:
-            rows = conn.execute("""
-                SELECT fs.*, dp.platform_type, dp.region
-                FROM fact_trend_first_seen fs
-                JOIN dim_platform dp ON fs.platform_id = dp.platform_id
-                WHERE fs.keyword = ?
-                ORDER BY fs.first_seen_week ASC
-            """, (keyword,)).fetchall()
-        return [dict(r) for r in rows]
 
     # ──────────────────────────────────────────
     # 유틸리티
@@ -156,20 +97,4 @@ class AgentMemory:
         """현재 주차 반환 (ISO 8601). 예: '2026-W19'"""
         return datetime.now().strftime("%G-W%V")
 
-    def get_active_brands(self) -> list:
-        """dim_brand 전체 조회."""
-        with self._conn() as conn:
-            rows = conn.execute("SELECT * FROM dim_brand").fetchall()
-        return [dict(r) for r in rows]
 
-    def get_platforms(self, platform_type: str = None) -> list:
-        """dim_platform 조회. platform_type: 'sns'|'search'|'retail'|None"""
-        with self._conn() as conn:
-            if platform_type:
-                rows = conn.execute(
-                    "SELECT * FROM dim_platform WHERE platform_type = ?",
-                    (platform_type,)
-                ).fetchall()
-            else:
-                rows = conn.execute("SELECT * FROM dim_platform").fetchall()
-        return [dict(r) for r in rows]

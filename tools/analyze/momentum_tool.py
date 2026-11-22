@@ -22,7 +22,6 @@ import sqlite3
 import logging
 from datetime import datetime, timezone
 
-import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)

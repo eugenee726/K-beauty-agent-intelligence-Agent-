@@ -11,7 +11,7 @@ Sephora US 수집 툴 — 아모레퍼시픽 제품 전용.
 수집 항목:
   A) build_catalog()    — BV Products API로 추적 브랜드(Sephora 입점) 전 제품 수집 → dim_product
                           + Playwright로 성분(key_ingredients) 스크랩
-  B) fetch_reviews_bv() — BV Reviews API VOC 수집 (VocCollector에서 호출)
+  B) VOC 리뷰 수집은 tools/collect/voc_collector.py 가 BV Reviews API로 직접 수행
 
 카탈로그 필드 매핑:
   BV Description    → key_benefits  (Skincare Concerns 파싱)
@@ -495,49 +495,6 @@ class SephoraTool:
 
         logger.info(f"Playwright 스크랩 완료: {len(results)}/{len(products)}개 성공")
         return results
-
-    # ──────────────────────────────────────────
-    # BazaarVoice Reviews API
-    # ──────────────────────────────────────────
-    def fetch_reviews_bv(self, sephora_pid: str,
-                         limit: int = 50) -> list[dict]:
-        """BazaarVoice Reviews API로 제품 리뷰 수집."""
-        params = {
-            "Filter":     [f"ProductId:{sephora_pid}", "contentlocale:en*"],
-            "Sort":       "SubmissionTime:desc",
-            "Limit":      limit,
-            "Include":    "Products,Comments",
-            "Stats":      "Reviews",
-            "passkey":    BV_PASSKEY,
-            "apiversion": "5.4",
-            "Locale":     "en_US",
-        }
-        try:
-            resp = requests.get(BV_REVIEWS_URL, params=params,
-                                headers=BV_HEADERS, timeout=30)
-            resp.raise_for_status()
-            reviews = []
-            for r in resp.json().get("Results", []):
-                dt_str = r.get("SubmissionTime", "")
-                try:
-                    dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                    submission_time = dt.strftime("%Y/%m/%d")
-                except Exception:
-                    submission_time = dt_str
-                text = r.get("ReviewText", "")
-                if not text:
-                    continue
-                reviews.append({
-                    "rating":          float(r["Rating"]) if r.get("Rating") else None,
-                    "text":            text,
-                    "helpful":         r.get("TotalPositiveFeedbackCount", 0),
-                    "submission_time": submission_time,
-                })
-            logger.info(f"  BV Reviews [{sephora_pid}]: {len(reviews)}개")
-            return reviews
-        except Exception as e:
-            logger.warning(f"BV Reviews 오류 ({sephora_pid}): {e}")
-            return []
 
     # ──────────────────────────────────────────
     # A. 카탈로그 구축 (월 1회)

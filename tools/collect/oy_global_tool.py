@@ -30,14 +30,13 @@ from playwright.async_api import async_playwright
 from tools.collect.brand_registry import (
     BrandMatcher, load_brands, register_observed_brand, set_oy_brand_no, slugify,
 )
-from tools.collect._product_utils import next_product_id, find_matching_product
+from tools.collect._product_utils import next_product_id
 
 logger = logging.getLogger(__name__)
 
 BASE_URL     = "https://global.oliveyoung.com"
 BEST_URL     = "/display/page/best-seller"
 PRODUCT_URL  = "/product/detail?prdtNo="
-MAX_REVIEWS  = 50
 SCROLL_DELAY = 2
 
 # 수집할 카테고리 → (카테고리명, 버튼 텍스트)
@@ -480,151 +479,6 @@ class OYGlobalTool:
 
         logger.info(f"OY Top in Korea: {len(results)}개 수집")
         return results
-
-    # ──────────────────────────────────────────
-    # B. VOC 수집 (검증된 셀렉터)
-    # ──────────────────────────────────────────
-    async def _collect_reviews(self, page, prdtNo: str) -> list[dict]:
-        url = BASE_URL + PRODUCT_URL + prdtNo
-        reviews = []
-        seen_texts = set()
-
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=40_000)
-            await page.wait_for_timeout(4000)
-            await self._close_popups(page)
-
-            # 리뷰 섹션까지 스크롤
-            for rev_sel in ['.prd-review-list', '.review-list', '[class*="review"]', '#reviewArea']:
-                try:
-                    el = await page.query_selector(rev_sel)
-                    if el:
-                        await el.scroll_into_view_if_needed()
-                        await page.wait_for_timeout(2000)
-                        break
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.warning(f"VOC 페이지 접속 실패 ({prdtNo}): {e}")
-            return []
-
-        no_new_count = 0
-
-        for _ in range(30):
-            if len(reviews) >= MAX_REVIEWS:
-                break
-
-            items = []
-            for sel in ['.prd-review-list > li', '.review-list > li',
-                        '.product-review-unit-main', '.review-item',
-                        '[class*="review-unit"]', '[class*="review-item"]',
-                        'li[class*="review"]']:
-                found = await page.query_selector_all(sel)
-                if found:
-                    items = found
-                    break
-
-            if not items:
-                prev_h = await page.evaluate("document.body.scrollHeight")
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(SCROLL_DELAY * 1000)
-                new_h = await page.evaluate("document.body.scrollHeight")
-                if new_h <= prev_h:
-                    break
-                continue
-
-            prev_count = len(reviews)
-
-            for item in items:
-                if len(reviews) >= MAX_REVIEWS:
-                    break
-                try:
-                    # 텍스트
-                    text = None
-                    for t_sel in ['.review-unit-cont-comment', '.review-unit-cont',
-                                  '.review-text', '[class*="comment"]', 'p']:
-                        el = await item.query_selector(t_sel)
-                        if el:
-                            t = (await el.inner_text()).strip()
-                            if t and len(t) > 10:
-                                text = t
-                                break
-                    if not text:
-                        text = (await item.inner_text()).strip()
-                    if not text or len(text) < 10:
-                        continue
-                    text = re.sub(r'\s*Translate\s*$', '', text, flags=re.IGNORECASE).strip()
-                    if text in seen_texts:
-                        continue
-                    seen_texts.add(text)
-
-                    # 별점
-                    rating = 0.0
-                    try:
-                        container = await item.query_selector('.review-star-rating') or item
-                        star_wraps = await container.query_selector_all('.wrap-icon-star')
-                        if star_wraps:
-                            filled = sum(
-                                1.0 if len(await sw.query_selector_all('.icon-star.filled')) >= 2
-                                else 0.5 if len(await sw.query_selector_all('.icon-star.filled')) == 1
-                                else 0
-                                for sw in star_wraps
-                            )
-                            rating = filled
-                    except Exception:
-                        pass
-
-                    # 날짜
-                    date_str = ""
-                    for d_sel in ['.review-info .date', '.review-write-info-date', '.date', 'time']:
-                        el = await item.query_selector(d_sel)
-                        if el:
-                            date_str = (await el.inner_text()).strip()
-                            if date_str:
-                                break
-
-                    # Helpful
-                    helpful = 0
-                    for h_sel in ['.btn-helpful .count', '.helpful-count']:
-                        el = await item.query_selector(h_sel)
-                        if el:
-                            digits = ''.join(filter(str.isdigit, await el.inner_text()))
-                            helpful = int(digits) if digits else 0
-                            if helpful:
-                                break
-
-                    reviews.append({
-                        "title":           None,
-                        "rating":          float(rating) if rating else None,
-                        "text":            text,
-                        "helpful":         helpful,
-                        "submission_time": _parse_date(date_str),
-                    })
-                except Exception:
-                    continue
-
-            if len(reviews) == prev_count:
-                no_new_count += 1
-                if no_new_count >= 3:
-                    break
-            else:
-                no_new_count = 0
-
-            await page.evaluate("window.scrollBy(0, 500)")
-            await page.wait_for_timeout(1000)
-            for more_sel in ['button.review-list-more-btn', "button:has-text('More')", '.btn-more']:
-                try:
-                    btn = page.locator(more_sel)
-                    if await btn.count() > 0 and await btn.first.is_visible():
-                        await btn.first.scroll_into_view_if_needed()
-                        await btn.first.click(force=True)
-                        await page.wait_for_timeout(SCROLL_DELAY * 1000)
-                        break
-                except Exception:
-                    pass
-
-        logger.info(f"  VOC [{prdtNo}]: {len(reviews)}개")
-        return reviews
 
     # ──────────────────────────────────────────
     # A. 브랜드 페이지 카탈로그 수집

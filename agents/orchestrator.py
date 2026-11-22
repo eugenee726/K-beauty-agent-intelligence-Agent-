@@ -242,7 +242,7 @@ class Orchestrator:
     ) -> dict:
         """
         카탈로그 초기 구축 (월 1회 권장).
-        platforms: ['oy_global', 'oy_kr', 'sephora'] 또는 None(전체)
+        platforms: ['oy_global', 'sephora'] 또는 None(전체)
         scrape_ingredients: Sephora Playwright 성분 스크랩 여부 (기본 True)
         """
         from tools.collect.oy_global_tool import OYGlobalTool

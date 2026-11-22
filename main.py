@@ -109,7 +109,7 @@ def main() -> None:
     parser.add_argument(
         "--platforms",
         nargs   = "+",
-        choices = ["oy_global", "oy_kr", "sephora"],
+        choices = ["oy_global", "sephora"],
         default = None,
         help    = "build-catalog 대상 플랫폼 (기본: 전체)",
     )
