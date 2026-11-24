@@ -335,7 +335,7 @@ class DecisionAgent:
         return targets
 
     def _trigger_voc(self, targets: list[dict]) -> int:
-        """이미 수집된 (platform, product) 제외 후 VOC 수집 + GPT 감성 분석."""
+        """이미 수집된 (platform, product) 제외 후 VOC 수집 + LLM 감성 분석."""
         # 과거 주차 재분석(backfill) 때 지금 리뷰를 수집해 과거 주차에 붙이지 않도록 막는다.
         # 그 주에 이미 저장된 VOC 만 쓰고, 없으면 기존 폴백(직전 주차 값)이 적용된다.
         if self.week != self.memory.get_current_week():
@@ -371,12 +371,11 @@ class DecisionAgent:
             return 0
         platform_stats = collector.platform_stats
 
-        openai_key = os.getenv("OPENAI_API_KEY", "")
-        if not openai_key:
-            logger.warning("OPENAI_API_KEY 없음 — VOC 감성 분석 스킵")
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            logger.warning("ANTHROPIC_API_KEY 없음 — VOC 감성 분석 스킵")
             return result.get("total", 0)
 
-        voc_tool = VOCTool(self.db_path, openai_key)
+        voc_tool = VOCTool(self.db_path)
         saved = 0
         for t in new_targets:
             with self._conn() as conn:

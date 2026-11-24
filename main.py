@@ -15,7 +15,7 @@ K-Beauty Intelligence Agent v3 — CLI 진입점.
 환경변수 (.env):
   APIFY_TOKEN       — TikTok 수집 (Apify)
   YOUTUBE_API_KEY   — YouTube Data API v3
-  OPENAI_API_KEY    — VOC 감성 분석 (선택)
+  ANTHROPIC_API_KEY — 인사이트 생성·검증, VOC 감성 분석
 """
 
 import argparse

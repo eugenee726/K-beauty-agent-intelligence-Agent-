@@ -60,7 +60,7 @@ flowchart LR
 
 ## 실행
 
-필요한 것: Python 3.11, Docker, API 키(Anthropic, YouTube Data API, Apify, OpenAI).
+필요한 것: Python 3.11, Docker, API 키(Anthropic, YouTube Data API, Apify).
 
 ```bash
 # 1. 환경 변수

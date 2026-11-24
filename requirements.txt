@@ -1,7 +1,6 @@
 # K-Beauty Intelligence Agent v3 - Dependencies
 
 # LLM
-openai>=1.0.0
 anthropic>=0.39.0
 
 # 데이터 수집

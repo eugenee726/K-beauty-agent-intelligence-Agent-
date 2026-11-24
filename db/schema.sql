@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS fact_voc_signals (
     sentiment_pos  REAL,   -- 긍정 비율 (0~1)
     sentiment_neg  REAL,   -- 부정 비율 (0~1)
 
-    -- 키워드 추출 (GPT 활용)
+    -- 키워드 추출 (LLM 활용)
     pos_keywords   TEXT,   -- JSON: ["lightweight","glass skin","no white cast"]
     neg_keywords   TEXT,   -- JSON: ["too heavy","strong scent","broke me out"]
     needs_keywords TEXT,   -- JSON: ["more SPF","fragrance free version","lighter texture"]

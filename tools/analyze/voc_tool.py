@@ -1,7 +1,7 @@
 """
 voc_tool.py
 ────────────
-GPT 기반 VOC (Voice of Customer) 분석 툴.
+LLM 기반 VOC (Voice of Customer) 분석 툴.
 
 수행 기능:
   1) 리뷰 텍스트 배치 분석 (최대 20개 리뷰 → 1개 API 호출)
@@ -12,15 +12,16 @@ GPT 기반 VOC (Voice of Customer) 분석 툴.
      - needs_keywords: 소비자 니즈 (ex. "fragrance free", "more SPF")
   4) fact_voc_signals 저장
 
-GPT 모델: gpt-4o-mini (비용 최적화)
+모델: VOC_MODEL 환경변수 (기본 claude-haiku-5-5, 비용 최적화)
 """
 
 import json
+import os
 import sqlite3
 import logging
 from datetime import datetime, timezone
 
-from openai import OpenAI
+import anthropic
 
 logger = logging.getLogger(__name__)
 
@@ -43,15 +44,34 @@ Rules:
 - neg_keywords: specific complaints, side effects, disappointments
 - needs_keywords: wishes, requests for improvement, "would like", "wish it had"
 - sentiment_pos + sentiment_neg should roughly sum to 1.0
+- Write every keyword in English, translating if the reviews are in another language
 """
+
+DEFAULT_VOC_MODEL = "claude-haiku-5-5"
+
+# 구조화 출력(JSON schema) — 응답을 항상 같은 필드로 받는다
+VOC_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "sentiment_pos":       {"type": "number"},
+        "sentiment_neg":       {"type": "number"},
+        "pos_keywords":        {"type": "array", "items": {"type": "string"}},
+        "neg_keywords":        {"type": "array", "items": {"type": "string"}},
+        "needs_keywords":      {"type": "array", "items": {"type": "string"}},
+        "avg_rating_estimate": {"type": "number", "description": "추정 불가하면 생략"},
+    },
+    "required": ["sentiment_pos", "sentiment_neg", "pos_keywords", "neg_keywords", "needs_keywords"],
+}
 
 
 class VOCTool:
-    """GPT 기반 리뷰 감성 분석 + 키워드 추출."""
+    """LLM 기반 리뷰 감성 분석 + 키워드 추출."""
 
-    def __init__(self, db_path: str, openai_api_key: str):
+    def __init__(self, db_path: str, model: str | None = None):
         self.db_path = db_path
-        self.client  = OpenAI(api_key=openai_api_key)
+        self.model   = model or os.getenv("VOC_MODEL", DEFAULT_VOC_MODEL)
+        self.client  = anthropic.Anthropic()
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -62,11 +82,11 @@ class VOCTool:
         return datetime.now(tz=timezone.utc).strftime("%G-W%V")
 
     # ──────────────────────────────────────────
-    # GPT 분석 (배치: 최대 20개 리뷰)
+    # LLM 분석 (배치: 최대 20개 리뷰)
     # ──────────────────────────────────────────
     def _analyze_reviews(self, reviews: list[str]) -> dict:
         """
-        리뷰 목록 → GPT 분석 → 감성/키워드 dict 반환.
+        리뷰 목록 → LLM 분석 → 감성/키워드 dict 반환.
         실패 시 기본값 반환.
         """
         if not reviews:
@@ -76,19 +96,22 @@ class VOCTool:
         review_text = "\n---\n".join(r[:300] for r in reviews[:20])
 
         try:
-            resp = self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user",   "content": f"Reviews:\n{review_text}"},
-                ],
-                temperature=0.1,
-                max_tokens=400,
-                response_format={"type": "json_object"},
+            resp = self.client.messages.create(
+                model=self.model,
+                max_tokens=2048,
+                system=SYSTEM_PROMPT,
+                output_config={
+                    "effort": "low",
+                    "format": {"type": "json_schema", "schema": VOC_SCHEMA},
+                },
+                messages=[{"role": "user", "content": f"Reviews:\n{review_text}"}],
             )
-            return json.loads(resp.choices[0].message.content)
+            text = "".join(b.text for b in resp.content if b.type == "text")
+            if not text:
+                raise ValueError(f"응답 없음 (stop_reason={resp.stop_reason})")
+            return json.loads(text)
         except Exception as e:
-            logger.warning(f"GPT VOC 분석 실패: {e}")
+            logger.warning(f"VOC 분석 실패: {e}")
             return {}
 
     # ──────────────────────────────────────────
