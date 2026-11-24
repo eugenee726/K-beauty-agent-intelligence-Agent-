@@ -44,13 +44,14 @@ def kbeauty_weekly():
         week = week_for_run(ctx)
         status = orchestrator().get_pipeline_status(week)
         if _force(ctx):
-            status.update(collect=False, analyze=False, decide=False)
+            status.update(collect=False, analyze=False, decide=False, collect_tiktok=False,
+                          collect_youtube=False, collect_oy_global=False)
         status["collect_allowed"] = is_current_week(week)
         return status
 
     def _collect(platform: str, status: dict) -> dict:
-        if status["collect"]:
-            raise AirflowSkipException(f"{status['week']} 수집 데이터 이미 있음")
+        if status.get(f"collect_{platform}", status["collect"]):
+            raise AirflowSkipException(f"{status['week']} {platform} 수집 데이터 이미 있음")
         if not status["collect_allowed"]:
             raise AirflowSkipException(f"{status['week']} 는 과거 주차 → 수집 skip (backfill)")
         result = orchestrator().run_collect(only=[platform])

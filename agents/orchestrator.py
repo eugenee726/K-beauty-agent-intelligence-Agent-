@@ -211,8 +211,8 @@ class Orchestrator:
     # 파이프라인 상태 (Airflow DAG 의 check_status 가 사용)
     # ──────────────────────────────────────────
     # 단계별 "완료" 판정 기준 테이블: 해당 주차 행이 있으면 그 단계는 끝난 것으로 본다.
+    # (수집은 플랫폼별로 따로 판정 — get_pipeline_status 참고)
     _STEP_TABLES = {
-        "collect": "fact_sns_raw",
         "analyze": "fact_sns_signals",
         "decide":  "fact_trend_insights",
     }
@@ -220,19 +220,34 @@ class Orchestrator:
     def get_pipeline_status(self, week: str | None = None) -> dict:
         """
         주차별 단계 완료 여부.
-        반환 예: {"week": "2026-W47", "collect": True, "analyze": True, "decide": False}
+        반환 예: {"week": "2026-W47", "collect": True, "analyze": True, "decide": False,
+                  "collect_tiktok": True, "collect_youtube": True, "collect_oy_global": True}
         """
         week = week or self.memory.get_current_week()
         status: dict = {"week": week}
         with sqlite3.connect(self.db_path, timeout=10) as conn:
-            for step, table in self._STEP_TABLES.items():
+            def _has(sql: str, *params) -> bool:
                 try:
-                    n = conn.execute(
-                        f"SELECT COUNT(*) FROM {table} WHERE week = ?", (week,)
-                    ).fetchone()[0]
+                    return conn.execute(sql, (week, *params)).fetchone()[0] > 0
                 except sqlite3.OperationalError:
-                    n = 0
-                status[step] = n > 0
+                    return False
+
+            for step, table in self._STEP_TABLES.items():
+                status[step] = _has(f"SELECT COUNT(*) FROM {table} WHERE week = ?")
+
+            # 수집은 플랫폼별로 따로 판정한다. YouTube 매일 수집이 목요일 전에 그 주 fact_sns_raw 를
+            # 미리 채우므로, '원본 한 줄이라도 있으면 수집 끝' 으로 보면 TikTok·OY 수집까지 건너뛴다.
+            #   tiktok    : 원본 게시물
+            #   youtube   : 주간 집계(aggregate_week) 결과 — 매일 원본만으로는 미완료
+            #   oy_global : 랭킹
+            status["collect_tiktok"] = _has(
+                "SELECT COUNT(*) FROM fact_sns_raw WHERE week = ? AND platform_id = ?", "tiktok")
+            status["collect_youtube"] = _has(
+                "SELECT COUNT(*) FROM fact_sns_signals WHERE week = ? AND platform_id = ?", "youtube")
+            status["collect_oy_global"] = _has(
+                "SELECT COUNT(*) FROM fact_retail_rankings WHERE week = ?")
+            status["collect"] = (status["collect_tiktok"] and status["collect_youtube"]
+                                 and status["collect_oy_global"])
         return status
 
     def build_catalog(
