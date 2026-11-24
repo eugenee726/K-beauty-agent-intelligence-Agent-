@@ -19,6 +19,44 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _migrate_raw_reviews_unique(conn: sqlite3.Connection) -> None:
+    """
+    fact_raw_reviews 의 UNIQUE 키에 week 를 넣는다 (예전 DB 전용, 이미 바뀌었으면 아무것도 안 함).
+    예전 키는 주차가 빠져 있어 지난주에 저장된 리뷰가 이번 주 표본에서 버려졌다.
+    SQLite 는 UNIQUE 제약을 바꿀 수 없어 테이블을 새로 만들어 옮긴다.
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='fact_raw_reviews'"
+    ).fetchone()
+    if not row or "UNIQUE (week, platform_id" in " ".join(row[0].split()):
+        return
+    before = conn.execute("SELECT COUNT(*) FROM fact_raw_reviews").fetchone()[0]
+    conn.executescript("""
+        BEGIN;
+        CREATE TABLE fact_raw_reviews_new (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            week            TEXT NOT NULL,
+            platform_id     TEXT NOT NULL,
+            product_id      TEXT NOT NULL,
+            rating          REAL,
+            review_text     TEXT NOT NULL,
+            helpful         INTEGER DEFAULT 0,
+            submission_time TEXT,
+            created_at      TEXT DEFAULT (datetime('now')),
+            UNIQUE (week, platform_id, product_id, submission_time, review_text)
+        );
+        INSERT INTO fact_raw_reviews_new
+            (id, week, platform_id, product_id, rating, review_text, helpful, submission_time, created_at)
+        SELECT id, week, platform_id, product_id, rating, review_text, helpful, submission_time, created_at
+        FROM fact_raw_reviews;
+        DROP TABLE fact_raw_reviews;
+        ALTER TABLE fact_raw_reviews_new RENAME TO fact_raw_reviews;
+        COMMIT;
+    """)
+    after = conn.execute("SELECT COUNT(*) FROM fact_raw_reviews").fetchone()[0]
+    logger.info(f"fact_raw_reviews UNIQUE 키에 week 추가 (행 {before} → {after})")
+
+
 class AgentMemory:
     """
     에이전트 상태 관리.
@@ -42,6 +80,7 @@ class AgentMemory:
             # dim_brand 수집용 컬럼 추가·AP 시드 (schema.sql 이후에 실행해야 함)
             from tools.collect.brand_registry import ensure_brand_schema
             ensure_brand_schema(conn)
+            _migrate_raw_reviews_unique(conn)
         logger.info(f"DB 초기화 완료: {self.db_path}")
 
     def _conn(self) -> sqlite3.Connection:

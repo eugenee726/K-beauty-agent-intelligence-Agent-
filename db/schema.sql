@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS fact_raw_reviews (
     submission_time TEXT,               -- 'YYYY/MM/DD'
     created_at      TEXT DEFAULT (datetime('now')),
 
-    UNIQUE (platform_id, product_id, submission_time, review_text)  -- 중복 방지
+    UNIQUE (week, platform_id, product_id, submission_time, review_text)  -- 주차 안에서만 중복 방지 (주마다 최신10+도움됨10 표본을 새로 저장)
 );
 
 
