@@ -1,5 +1,9 @@
 """
-kbeauty_weekly — 주간 파이프라인 (매주 목요일 09:00 KST)
+kbeauty_weekly — 주간 파이프라인 (매주 목요일 18:30 KST)
+
+실행 시각: YouTube 할당은 매일 17:00 KST(태평양 자정)에 초기화된다. 목요일 17:30 일간 수집이 수요일치를
+새 할당으로 모은 뒤 실행해야, 주간 실행은 집계(약 30단위)와 심층 수집(약 2,000단위)만 쓴다.
+09:00 에 돌리면 수요일 17:30 일간 수집과 같은 할당 하루를 나눠 써서 한도를 넘을 수 있다.
 
 check_status ─> [collect_tiktok | collect_youtube | collect_oy_global]
              ─> data_quality_check ─> analyze ─> decide ─> validate_insights ─> publish_report
@@ -28,7 +32,7 @@ def _force(context) -> bool:
 
 @dag(
     dag_id="kbeauty_weekly",
-    schedule="0 9 * * 4",
+    schedule="30 18 * * 4",
     start_date=pendulum.datetime(2026, 11, 1, tz="Asia/Seoul"),
     catchup=False,
     max_active_runs=1,          # SQLite 동시 쓰기 방지

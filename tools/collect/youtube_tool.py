@@ -84,8 +84,12 @@ class YouTubeTool:
     # ──────────────────────────────────────────
     # 2단계: 영상 통계 일괄 조회 (최대 50개씩)
     # ──────────────────────────────────────────
-    def _fetch_video_stats(self, video_ids: list[str]) -> list[dict]:
-        """Video statistics API → 통계 + 제목/설명 반환."""
+    def _fetch_video_stats(self, video_ids: list[str], failed: list | None = None) -> list[dict]:
+        """
+        Video statistics API → 통계 + 제목/설명 반환.
+        failed 를 넘기면 조회에 실패한 배치(할당량 소진 등)의 영상 ID 를 담아 준다.
+        (응답에 없는 영상 = 삭제·비공개는 실패가 아니라 결과에서 빠질 뿐이다)
+        """
         if not video_ids:
             return []
         yt = self._get_client()
@@ -113,6 +117,8 @@ class YouTubeTool:
                     })
             except Exception as e:
                 logger.warning(f"YouTube 통계 조회 실패: {e}")
+                if failed is not None:
+                    failed.extend(batch)
         return results
 
     # ──────────────────────────────────────────
@@ -150,8 +156,32 @@ class YouTubeTool:
         from datetime import date as _date
         day = day if isinstance(day, _date) else datetime.strptime(str(day), "%Y-%m-%d").date()
         after = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
-        before = after + timedelta(days=1)
         week = self.run_week_of(day)
+        stored, n_q = self._collect_window(after, after + timedelta(days=1), week)
+        with self._conn() as conn:
+            conn.execute(self.DAILY_LOG_SQL)
+            if n_q == len(self.TARGET_QUERIES):   # 끝까지 수집한 날만 완료로 기록
+                conn.execute("INSERT OR REPLACE INTO yt_daily_log (day, queries, stored) VALUES (?, ?, ?)",
+                             (day.isoformat(), n_q, stored))
+        logger.info(f"YouTube 일간 수집 {day} (week={week}): 검색어 {n_q}개, 신규 저장 {stored}건")
+        return stored
+
+    def collect_gap(self, days: list, week: str) -> int:
+        """
+        일간 수집이 빠진 여러 날을 검색어당 1번의 기간 검색으로 채운다 (할당 약 5,400단위로 고정).
+        하루씩 채우면 빠진 날 × 5,400단위라 이틀만 빠져도 무료 할당(10,000)을 넘는다.
+        기간 전체에서 검색어당 50개라 하루씩 모을 때보다 표본은 성기다. 일간 완료 기록은 남기지 않는다.
+        """
+        first, last = min(days), max(days)
+        after = datetime(first.year, first.month, first.day, tzinfo=timezone.utc)
+        before = datetime(last.year, last.month, last.day, tzinfo=timezone.utc) + timedelta(days=1)
+        stored, n_q = self._collect_window(after, before, week)
+        logger.warning(f"YouTube 일간 수집 누락 {len(days)}일({first}~{last}) → 기간 검색으로 보충: "
+                       f"검색어 {n_q}개, 신규 저장 {stored}건 (일간보다 표본 적음)")
+        return stored
+
+    def _collect_window(self, after: datetime, before: datetime, week: str) -> tuple[int, int]:
+        """[after, before) 에 올라온 영상을 검색어별 1페이지 수집해 fact_sns_raw 에 저장. (신규 저장 수, 완료 검색어 수)"""
         yt = self._get_client()
         ids, seen, n_q = [], set(), 0
         for query in self.TARGET_QUERIES:
@@ -165,7 +195,7 @@ class YouTubeTool:
                 n_q += 1
             except Exception as e:
                 if "quota" in str(e).lower():
-                    logger.warning(f"YouTube 할당량 소진 — {day} 수집 중단 ({n_q}개 검색어까지)")
+                    logger.warning(f"YouTube 할당량 소진 — {after:%Y-%m-%d}~ 수집 중단 ({n_q}개 검색어까지)")
                     break
                 logger.warning(f"YouTube 검색 실패 {query!r}: {e}")
                 continue
@@ -187,12 +217,7 @@ class YouTubeTool:
                     (week, self.PLATFORM_ID, v["video_id"], content_text, json.dumps(v.get("tags", [])),
                      v["views"], v["likes"]))
                 stored += cur.rowcount
-            conn.execute(self.DAILY_LOG_SQL)
-            if n_q == len(self.TARGET_QUERIES):   # 끝까지 수집한 날만 완료로 기록
-                conn.execute("INSERT OR REPLACE INTO yt_daily_log (day, queries, stored) VALUES (?, ?, ?)",
-                             (day.isoformat(), n_q, stored))
-        logger.info(f"YouTube 일간 수집 {day} (week={week}): 검색어 {n_q}개, 신규 저장 {stored}건")
-        return stored
+        return stored, n_q
 
     def aggregate_week(self, week: str) -> int:
         """
@@ -200,13 +225,30 @@ class YouTubeTool:
         fact_sns_signals(youtube, week) 를 지우고 새로 쓴다.
         """
         with self._conn() as conn:
-            ids = [r[0] for r in conn.execute(
-                "SELECT post_id FROM fact_sns_raw WHERE week=? AND platform_id=?", (week, self.PLATFORM_ID))]
+            raw = {r["post_id"]: r for r in conn.execute(
+                "SELECT post_id, content_text, hashtags, view_count, like_count FROM fact_sns_raw "
+                "WHERE week=? AND platform_id=?", (week, self.PLATFORM_ID))}
+        failed: list[str] = []
+        fresh = self._fetch_video_stats(list(raw), failed=failed)
+        # 통계 조회에 실패한 영상(할당량 소진 등)은 저장돼 있던 값으로 집계한다 — 0건으로 끝나 파이프라인이 멈추지 않게.
+        # 댓글 수는 원문 테이블에 없어 0 으로 본다. 측정 시점이 섞이므로 경고로 남긴다.
+        stale = []
+        for pid in failed:
+            r = raw[pid]
+            try:
+                tags = json.loads(r["hashtags"] or "[]")
+            except (TypeError, ValueError):
+                tags = []
+            stale.append({"video_id": pid, "title": r["content_text"] or "", "description": "", "tags": tags,
+                          "views": r["view_count"] or 0, "likes": r["like_count"] or 0, "comments": 0})
+        if stale:
+            logger.warning(f"YouTube 주간 집계 {week}: 통계 조회 실패 {len(stale)}개는 저장된 조회수·좋아요로 집계 (댓글 0)")
         records = []
         with self._conn() as conn:
-            for v in self._fetch_video_stats(ids):
+            for v in fresh:
                 conn.execute("UPDATE fact_sns_raw SET view_count=?, like_count=? WHERE platform_id=? AND post_id=?",
                              (v["views"], v["likes"], self.PLATFORM_ID, v["video_id"]))
+            for v in fresh + stale:
                 engagement = v["views"] * 0.2 + v["likes"] * 1.5 + v["comments"] * 3.0
                 if engagement < self.min_engagement:
                     continue
@@ -231,13 +273,14 @@ class YouTubeTool:
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
                     (week, self.PLATFORM_ID, r["keyword"], int(r["post_count"]), int(r["total_views"]),
                      int(r["total_likes"]), int(r["total_comments"]), float(r["engagement_score"]), is_new))
-        logger.info(f"YouTube 주간 집계 {week}: 영상 {len(ids)}개 → 키워드 {len(agg)}개")
+        logger.info(f"YouTube 주간 집계 {week}: 영상 {len(raw)}개 → 키워드 {len(agg)}개")
         return len(agg)
 
     def fetch_and_store(self, week: str = None) -> int:
         """
         주간 수집 인터페이스 (Airflow collect_youtube).
-        이번 주에 일간 수집이 빠진 날을 채운 뒤(할당량 안에서) 주간 집계를 다시 만든다.
+        이번 주에 일간 수집이 빠진 날을 채운 뒤 주간 집계를 다시 만든다.
+        빠진 날이 하루면 일간 수집 1회, 여러 날이면 기간 검색 1회(collect_gap)라 할당은 약 5,400단위를 넘지 않는다.
         일간 수집 기록이 전혀 없으면 예전 방식(최근 7일 검색)으로 수집한다.
         """
         week = week or self._current_week()
@@ -249,9 +292,11 @@ class YouTubeTool:
         today = datetime.now(tz=timezone.utc).date()
         days = [thursday - timedelta(days=i) for i in range(7, 0, -1) if thursday - timedelta(days=i) < today]
         if any(d.isoformat() in done for d in days):
-            for d in days:
-                if d.isoformat() not in done:
-                    self.collect_day(d)
+            missing = [d for d in days if d.isoformat() not in done]
+            if len(missing) == 1:
+                self.collect_day(missing[0])
+            elif missing:
+                self.collect_gap(missing, week)
             return self.aggregate_week(week)
         return self._fetch_and_store_weekly(week)
 
