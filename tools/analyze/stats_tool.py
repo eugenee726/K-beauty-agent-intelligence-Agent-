@@ -9,7 +9,7 @@ stats_tool.py
      → z ≥ Z_ALERT(2.0) : is_anomaly (LLM·Decision 후보는 post_count 하한 추가)
   B) Growth Rate 가속도 — 성장률의 성장률 (2차 도함수)
   C) Cross-platform 상관 계수 — TikTok ↔ YouTube 키워드 동조화
-  D) Welch t-test — "이번 주 vs 이전 4주 평균" 유의미한 차이인가?
+  (이번 주 값 1개 vs 과거 4주로 하던 Welch t-test 는 표본 1개라 p 가 항상 NaN 이어서 제거)
 
 출력:
   DataFrame 반환 (에이전트가 판단에 사용)
@@ -36,7 +36,7 @@ class StatsTool:
 
     Z_ALERT         = 2.0   # z ≥ this → is_anomaly
     MIN_POST_COUNT  = 5     # LLM·Decision actionable volume floor
-    P_THRESH        = 0.05  # t-test 유의수준
+    P_THRESH        = 0.05  # 플랫폼 간 상관 유의수준
 
     def __init__(self, db_path: str):
         self.db_path = db_path
@@ -141,14 +141,6 @@ class StatsTool:
                 z_score = _z(current_score, hist_scores)
                 eng_z   = _z(float(current["eng_share"].iloc[0]), history["eng_share"].values)
 
-                last4 = history.tail(4)["post_share"].values
-                if len(last4) >= 2:
-                    _, p_val = stats.ttest_ind(
-                        [current_score], last4, equal_var=False
-                    )
-                else:
-                    p_val = 1.0
-
                 gr_series = history["growth_rate"].dropna()
                 growth_accel = float(
                     gr_series.iloc[-1] - gr_series.iloc[-2]
@@ -156,7 +148,6 @@ class StatsTool:
 
             else:
                 mean_h = std_h = z_score = 0.0
-                p_val  = 1.0
                 growth_accel = None
 
             results.append({
@@ -171,8 +162,6 @@ class StatsTool:
                 "is_anomaly":    1 if z_score >= self.Z_ALERT else 0,
                 "growth_rate":   current_gr,
                 "growth_accel":  round(growth_accel, 1) if growth_accel else None,
-                "p_value":       round(p_val, 4),
-                "significant":   1 if p_val < self.P_THRESH else 0,
                 "post_count":    current_post_count,
             })
 

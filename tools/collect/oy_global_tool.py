@@ -903,11 +903,14 @@ class OYGlobalTool:
                         INSERT OR IGNORE INTO dim_product
                             (product_id, brand_id, product_name_en,
                              category_main, category_sub,
+                             key_ingredients, key_benefits,
                              oy_prdtno, oy_url)
                         VALUES (:product_id, :brand_id, :product_name_en,
                                 :category_main, :category_sub,
+                                :key_ingredients, :key_benefits,
                                 :oy_prdtno, :oy_url)
-                    """, {**p, "product_id": pid})
+                    """, {"key_ingredients": None, "key_benefits": None,
+                          **p, "product_id": pid})
                     changes = conn.execute("SELECT changes()").fetchone()[0]
                     new_product_count += changes
                     if changes:
