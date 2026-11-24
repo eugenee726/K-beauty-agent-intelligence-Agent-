@@ -417,13 +417,10 @@ class VocCollector:
                     try:
                         container   = await item.query_selector('.review-star-rating') or item
                         star_wraps  = await container.query_selector_all('.wrap-icon-star')
-                        if star_wraps:
-                            rating = sum(
-                                1.0 if len(await sw.query_selector_all('.icon-star.filled')) >= 2
-                                else 0.5 if len(await sw.query_selector_all('.icon-star.filled')) == 1
-                                else 0
-                                for sw in star_wraps
-                            )
+                        # await 는 제너레이터 식 안에 쓰면 비동기 제너레이터가 되어 sum() 이 실패하므로 반복문으로 센다
+                        for sw in star_wraps:
+                            filled = len(await sw.query_selector_all('.icon-star.filled'))
+                            rating += 1.0 if filled >= 2 else 0.5 if filled == 1 else 0
                     except Exception:
                         pass
 
