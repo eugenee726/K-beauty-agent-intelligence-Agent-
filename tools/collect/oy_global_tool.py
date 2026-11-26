@@ -39,6 +39,10 @@ BEST_URL     = "/display/page/best-seller"
 PRODUCT_URL  = "/product/detail?prdtNo="
 SCROLL_DELAY = 2
 
+# 주간 랭킹 수집에서 신규 제품 상세 페이지를 읽는 최대 개수와 동시 탭 수 (2 vCPU 서버 기준)
+WEEKLY_DETAIL_LIMIT = 60
+DETAIL_CONCURRENCY  = 2
+
 # 수집할 카테고리 → (카테고리명, 버튼 텍스트)
 CATEGORIES = [
     ("skincare", "Skincare"),
@@ -82,7 +86,7 @@ async def _scrape_product_detail(page, prdtno: str) -> dict:
             await page.wait_for_selector("span.loc_cat", timeout=8_000)
         except Exception:
             pass
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(1000)
 
         # ── 브랜드 번호: 브랜드 페이지 링크 ──
         m = re.search(r"brandNo=([A-Z0-9]+)", await page.content())
@@ -111,8 +115,9 @@ async def _scrape_product_detail(page, prdtno: str) -> dict:
                 if link:
                     expanded = await link.get_attribute("aria-expanded")
                     if expanded == "false":
-                        await link.click()
-                        await page.wait_for_timeout(800)
+                        # timeout 없으면 가려진 링크에서 기본 30초를 기다림
+                        await link.click(timeout=3000)
+                        await page.wait_for_timeout(500)
             except Exception:
                 pass
 
@@ -870,19 +875,39 @@ class OYGlobalTool:
             )
 
             # 신규 제품 카테고리: 상세 페이지 방문으로 채움
+            # 주간 실행에서는 최대 WEEKLY_DETAIL_LIMIT 개만 상세를 읽고 (탭 DETAIL_CONCURRENCY 개 병렬),
+            # 나머지는 카테고리 없이 저장해 월간 카탈로그 수집이 채운다.
             if new_products:
-                logger.info(f"  신규 제품 {len(new_products)}개 → 상세 페이지 카테고리 수집")
-                for p in new_products:
-                    prdtno = p.get("oy_prdtno", "")
-                    if prdtno:
-                        detail = await _scrape_product_detail(page, prdtno)
+                targets = [p for p in new_products if p.get("oy_prdtno")][:WEEKLY_DETAIL_LIMIT]
+                logger.info(
+                    f"  신규 제품 {len(new_products)}개 → 상세 페이지 {len(targets)}개 수집 "
+                    f"(탭 {DETAIL_CONCURRENCY}개, 나머지는 월간 카탈로그에서)"
+                )
+                pages = [page] + [await ctx.new_page() for _ in range(DETAIL_CONCURRENCY - 1)]
+                queue: asyncio.Queue = asyncio.Queue()
+                for p in targets:
+                    queue.put_nowait(p)
+                done = 0
+                started = datetime.now(timezone.utc)
+
+                async def worker(pg):
+                    nonlocal done
+                    while not queue.empty():
+                        p = queue.get_nowait()
+                        detail = await _scrape_product_detail(pg, p["oy_prdtno"])
                         p["category_main"]   = detail["category_main"]
                         p["category_sub"]    = detail["category_sub"]
                         p["key_ingredients"] = detail["key_ingredients"]
                         p["key_benefits"]    = detail["key_benefits"]
                         if detail.get("brand_no"):
                             brand_nos[p["brand_id"]] = detail["brand_no"]
-                    await page.wait_for_timeout(500)
+                        done += 1
+                        if done % 20 == 0 or done == len(targets):
+                            sec = (datetime.now(timezone.utc) - started).total_seconds()
+                            logger.info(f"  상세 {done}/{len(targets)} ({sec / done:.1f}초/개)")
+                        await pg.wait_for_timeout(300)
+
+                await asyncio.gather(*(worker(pg) for pg in pages))
 
             await browser.close()
 

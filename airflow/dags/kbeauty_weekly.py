@@ -77,7 +77,7 @@ def kbeauty_weekly():
     def collect_youtube(status: dict) -> dict:
         return _collect("youtube", status)
 
-    @task(execution_timeout=timedelta(minutes=60))
+    @task(execution_timeout=timedelta(minutes=120))
     def collect_oy_global(status: dict) -> dict:
         return _collect("oy_global", status)
 
