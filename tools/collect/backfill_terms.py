@@ -57,7 +57,13 @@ def backfill(db_path: str, keywords: list[str] | None = None, dry_run: bool = Fa
     pats = {k: _pattern(k) for k in keywords}
     out: dict[str, dict[str, int]] = {}
     with sqlite3.connect(db_path, timeout=30) as conn:
-        weeks = [r[0] for r in conn.execute("SELECT DISTINCT week FROM fact_sns_raw ORDER BY week")]
+        # 아직 수집 중인 주차(다음 주간 실행이 집계할 주)는 건너뛴다 — 주간 집계가 새 사전으로 직접 센다.
+        # (TikTok 주간 집계는 이미 있는 키워드 행을 건너뛰므로, 여기서 미리 넣으면 갱신되지 않는다)
+        from datetime import date
+        from tools.collect.youtube_tool import YouTubeTool
+        open_week = YouTubeTool.run_week_of(date.today())
+        weeks = [r[0] for r in conn.execute(
+            "SELECT DISTINCT week FROM fact_sns_raw WHERE week < ? ORDER BY week", (open_week,))]
         for week in weeks:
             for platform in ENGAGEMENT:
                 rows = conn.execute(
