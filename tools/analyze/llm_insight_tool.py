@@ -269,12 +269,19 @@ Rules:
     def _call_llm(self, prompt: str, _retry: int = 0) -> dict:
         import time as _time
         try:
+            # 최신 모델(Sonnet 5.5 등)은 기본으로 사고(thinking)를 켜서 응답 앞에 thinking 블록이 올 수 있고,
+            # 사고 토큰도 max_tokens 에 포함된다 → 텍스트 블록만 모으고, 사고 몫까지 여유 있게 잡는다.
             resp = self.client.messages.create(
                 model=self.model,
-                max_tokens=2048,
+                max_tokens=16000,
                 messages=[{"role": "user", "content": prompt}],
             )
-            text = resp.content[0].text.strip()
+            text = "".join(b.text for b in resp.content if b.type == "text").strip()
+            if not text:
+                logger.error(f"LLM 응답에 텍스트 없음 (stop_reason={resp.stop_reason})")
+                return {}
+            if resp.stop_reason == "max_tokens":
+                logger.warning("LLM 응답이 max_tokens 에서 잘림 — JSON 이 불완전할 수 있음")
 
             # JSON 블록 추출 (```json ... ``` 감싸인 경우 대응)
             match = re.search(r'\{[\s\S]*\}', text)
