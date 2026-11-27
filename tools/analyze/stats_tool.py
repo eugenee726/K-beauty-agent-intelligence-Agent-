@@ -106,10 +106,9 @@ class StatsTool:
         # 탐지 지표 정규화: 수집량이 주마다 달라도 비교되도록 '그 주 전체 대비 비중'으로 본다.
         #   z_score = 키워드 게시물 비중의 z  (게시물 수 기반 → 바이럴 1건에 흔들리지 않음)
         #   eng_z   = 키워드 engagement 비중의 z (표시용)
-        with self._conn() as conn:
-            post_total = dict(conn.execute(
-                "SELECT week, COUNT(*) FROM fact_sns_raw WHERE platform_id IN ('tiktok','youtube') GROUP BY week"
-            ).fetchall())
+        # 분모 = 사전 용어가 있는 게시물 수 (원문은 사전과 무관하게 전부 저장하므로 COUNT(*) 를 쓰면 안 됨)
+        from tools.collect.sns_terms import dictionary_post_counts
+        post_total = {w: sum(d.values()) for w, d in dictionary_post_counts(self.db_path).items()}
         eng_total = df.groupby("week")["engagement_score"].sum().to_dict()
         df["post_share"] = df.apply(lambda r: (r["post_count"] or 0) / post_total[r["week"]]
                                     if post_total.get(r["week"]) else 0.0, axis=1)
@@ -120,11 +119,15 @@ class StatsTool:
             sd = float(np.std(hist, ddof=1)) if len(hist) >= 2 else 0.0
             return float((cur - float(np.mean(hist))) / sd) if sd > 0 else 0.0
 
+        # 기준선에서 뺄 주차: 품질 검사(data_quality) 하한 미달 주차
+        from tools.quality.data_quality import sns_failed_weeks
+        bad_weeks = sns_failed_weeks(self.db_path) - {week}
+
         results = []
         for keyword, grp in df.groupby("keyword"):
             grp = grp.sort_values("week")
             current = grp[grp["week"] == week]
-            history = grp[grp["week"] < week]
+            history = grp[(grp["week"] < week) & ~grp["week"].isin(bad_weeks)]
 
             if current.empty:
                 continue

@@ -369,3 +369,25 @@ CREATE TABLE IF NOT EXISTS fact_sns_deep (
     collected_at  TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (week, keyword, platform_id, post_id)
 );
+
+-- 키워드 사전 추가분 (시작 사전은 tools/collect/sns_terms.py GENERIC_TERMS). 사람이 승인: python main.py term approve
+CREATE TABLE IF NOT EXISTS dim_term (
+    term        TEXT PRIMARY KEY,   -- 원형, 소문자·공백 구분 (예: 'pimple patch')
+    status      TEXT NOT NULL,      -- 'active'(사전에 포함) | 'rejected'(후보에서 다시 보이지 않음)
+    category    TEXT,               -- 성분 | 제품유형 | 고민 | 루틴 | 기타
+    added_week  TEXT,               -- 이 용어로 정식 수집·집계가 시작되는 주차
+    source      TEXT,               -- 'candidate:<주차>' | 'manual'
+    note        TEXT,               -- 승인 근거
+    decided_at  TEXT DEFAULT (datetime('now'))
+);
+
+-- 사전 밖 용어 후보 (주간 실행 때 생성, 판정 없이 게시물 수 순)
+CREATE TABLE IF NOT EXISTS fact_term_candidates (
+    week        TEXT NOT NULL,
+    rank        INTEGER NOT NULL,
+    term        TEXT NOT NULL,
+    posts       INTEGER NOT NULL,
+    prev_avg    REAL,
+    weeks_seen  INTEGER,
+    PRIMARY KEY (week, term)
+);

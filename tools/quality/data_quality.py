@@ -66,3 +66,15 @@ def check_week(db_path: str, week: str) -> QualityReport:
         if total and (empty or 0) / total > 0.2:
             report.failures.append(f"fact_sns_raw 본문 공백 비율 {empty}/{total} > 20%")
     return report
+
+
+def sns_failed_weeks(db_path: str) -> set[str]:
+    """
+    SNS 수집이 위 하한(필수 항목)이나 본문 공백 기준에 못 미친 주차.
+    탐지 기준선(z 과거 평균·표준편차, 모멘텀 비교 주차)에서 뺀다 — 새 임계값 없이 같은 품질 기준을 재사용.
+    예: W16~W18 은 YouTube 38건으로 하한 100건 미달 (초기 시험 수집).
+    """
+    with sqlite3.connect(db_path, timeout=10) as conn:
+        weeks = [r[0] for r in conn.execute("SELECT DISTINCT week FROM fact_sns_raw")]
+    return {w for w in weeks
+            if any(f.startswith("fact_sns_raw") for f in check_week(db_path, w).failures)}

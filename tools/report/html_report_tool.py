@@ -836,7 +836,8 @@ class HTMLReportTool:
             q = lambda sql: conn.execute(sql, (week,)).fetchall()
             trends = q("""SELECT keyword, z_score, trend_shape, consumer_need
                           FROM fact_trend_insights WHERE week=? ORDER BY z_score DESC""")
-            posts = q("SELECT COUNT(*) FROM fact_sns_raw WHERE week=?")[0][0]
+            from tools.collect.sns_terms import dictionary_post_counts
+            posts = sum(dictionary_post_counts(self.db_path).get(week, {}).values())
             ranked = q("SELECT COUNT(DISTINCT product_id) FROM fact_retail_rankings WHERE week=?")[0][0]
             brands = q("""SELECT COUNT(DISTINCT p.brand_id) FROM fact_retail_rankings r
                           JOIN dim_product p ON p.product_id = r.product_id WHERE r.week=?""")[0][0]

@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from tools.analyze.brand_count import BRAND_STOPWORDS, brand_patterns, count_brands
+from tools.collect.sns_terms import approved_terms, dictionary_post_counts
 from tools.report.html_report_tool import OPP_META, QUAD_META, SHAPE_META, HTMLReportTool
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,8 @@ class DashboardBuilder:
 
     def _timeline(self, conn) -> list[dict]:
         """수집이 있었던 모든 주차의 게시물·engagement 합계 (개요 추이 차트용)."""
-        posts = dict(conn.execute("SELECT week, COUNT(*) FROM fact_sns_raw GROUP BY week").fetchall())
+        # 게시물 수 = 사전 용어가 있는 게시물 (탐지 분모와 같은 기준)
+        posts = {w: sum(d.values()) for w, d in self._dict_counts.items()}
         eng = dict(conn.execute("""SELECT week, SUM(engagement_score) FROM fact_sns_signals
                                    WHERE platform_id IN ('tiktok','youtube') GROUP BY week""").fetchall())
         return [{"week": w, "posts": posts.get(w, 0), "eng": round(eng.get(w) or 0)}
@@ -77,7 +79,7 @@ class DashboardBuilder:
         q = lambda sql, *a: conn.execute(sql, (week, *a)).fetchall()
 
         # KPI
-        posts = q("SELECT platform_id, COUNT(*) n FROM fact_sns_raw WHERE week=? GROUP BY platform_id")
+        posts = [{"platform_id": p, "n": n} for p, n in self._dict_counts.get(week, {}).items()]
         retail = q("SELECT platform_id, COUNT(*) n FROM fact_retail_rankings WHERE week=? GROUP BY platform_id")
         ranked = q("SELECT COUNT(DISTINCT product_id) FROM fact_retail_rankings WHERE week=?")[0][0]
         try:
@@ -235,6 +237,19 @@ class DashboardBuilder:
         }
 
     @staticmethod
+    def _term_candidates(conn) -> dict:
+        """가장 최근 주차의 사전 밖 용어 후보 (승인 대기). 테이블이 없으면 빈 값."""
+        try:
+            wk = conn.execute("SELECT MAX(week) FROM fact_term_candidates").fetchone()[0]
+            # 후보 생성 뒤 승인·거절한 용어는 빼고 보여 준다
+            rows = conn.execute("""SELECT term, posts, prev_avg, weeks_seen FROM fact_term_candidates
+                                   WHERE week=? AND term NOT IN (SELECT term FROM dim_term)
+                                   ORDER BY rank""", (wk,)).fetchall() if wk else []
+        except sqlite3.OperationalError:
+            return {}
+        return {"week": wk, "items": [dict(r) for r in rows]}
+
+    @staticmethod
     def _product_name(conn, target: str) -> str | None:
         if not re.fullmatch(r"S\d{6,}", target or ""):
             return None
@@ -245,6 +260,7 @@ class DashboardBuilder:
     def build(self) -> dict:
         with self._conn() as conn:
             self._patterns = brand_patterns(conn)
+            self._dict_counts = dictionary_post_counts(self.db_path)
             from agents.decision_agent import DecisionAgent
             known = DecisionAgent._known_brand_map(conn)
             names, company = {}, {}
@@ -258,7 +274,8 @@ class DashboardBuilder:
                 "timeline": self._timeline(conn),
                 "brand_names": names,
                 "brand_company": {k: v for k, v in company.items() if v},
-                "meta": {"opp": OPP_META, "quad": QUAD_META, "shape": SHAPE_META},
+                "meta": {"opp": OPP_META, "quad": QUAD_META, "shape": SHAPE_META, "added_terms": approved_terms(self.db_path),
+                         "term_candidates": self._term_candidates(conn)},
                 "brand_stopwords": sorted(BRAND_STOPWORDS),
             }
         return data

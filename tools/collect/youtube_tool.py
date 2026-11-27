@@ -208,7 +208,9 @@ class YouTubeTool:
         with self._conn() as conn:
             for v in self._fetch_video_stats(ids):
                 engagement = v["views"] * 0.2 + v["likes"] * 1.5 + v["comments"] * 3.0
-                if engagement < self.min_engagement or not self._extract_keywords(v["title"], v["description"], v["tags"]):
+                # 원문은 사전과 무관하게 저장한다 (나중에 추가한 용어를 과거 원문에서 정확히 다시 세고, 사전 밖 용어 후보를 찾기 위해).
+                # 키워드 신호·탐지 분모는 사전 용어가 있는 게시물만 쓴다 (aggregate_week, sns_terms.dictionary_post_counts).
+                if engagement < self.min_engagement:
                     continue
                 content_text = f"{v['title']} {v['description']}".strip()
                 cur = conn.execute("""INSERT OR IGNORE INTO fact_sns_raw
@@ -330,10 +332,8 @@ class YouTubeTool:
                 keywords = self._extract_keywords(
                     v["title"], v["description"], v["tags"]
                 )
-                if not keywords:
-                    continue
 
-                # raw 원문 저장용 레코드 (제목 + 설명 합쳐서 저장)
+                # raw 원문 저장용 레코드 (제목 + 설명 합쳐서 저장) — 사전 용어가 없어도 저장 (_collect_window 주석 참고)
                 content_text = f"{v['title']} {v['description']}".strip()
                 if content_text and v["video_id"]:
                     raw_records.append({

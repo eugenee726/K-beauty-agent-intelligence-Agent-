@@ -52,8 +52,8 @@ OTHER_BRAND_EXCLUDE = {
 def _exclude_keywords(db_path: str) -> set[str]:
     """광의어 + 모든 추적 브랜드 용어(정규화 형태와 원형 모두)."""
     import re
-    from tools.collect.sns_terms import kbeauty_terms, GENERIC_TERMS
-    brand = kbeauty_terms(db_path) - GENERIC_TERMS
+    from tools.collect.sns_terms import kbeauty_terms, generic_terms
+    brand = kbeauty_terms(db_path) - generic_terms(db_path)   # 승인된 추가 용어는 브랜드로 빼지 않음
     normalized = {re.sub(r"[\s\-&]+", "_", t.strip()) for t in brand}
     return GENERIC_EXCLUDE | OTHER_BRAND_EXCLUDE | brand | normalized
 

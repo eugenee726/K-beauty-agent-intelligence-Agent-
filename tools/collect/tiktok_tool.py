@@ -209,10 +209,9 @@ class TikTokTool:
                     continue
 
                 keywords = self._extract_keywords(caption, tags)
-                if not keywords:
-                    continue
 
-                # raw 원문 저장용 레코드
+                # raw 원문 저장용 레코드 — 사전 용어가 없어도 저장한다 (나중에 추가한 용어 재집계·사전 밖 용어 후보용).
+                # 키워드 신호와 탐지 분모는 사전 용어가 있는 게시물만 쓴다.
                 if caption and post_id:
                     raw_records.append({
                         "week":         week,

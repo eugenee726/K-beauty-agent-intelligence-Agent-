@@ -20,6 +20,7 @@
     RADAR_Y_MAX:        { v: 10,  label: '레이더 세로 상한', desc: 'z-score가 이 값을 넘으면 축 위쪽 끝에 두고 실제 값을 라벨로 표시' },
     SHARE_TARGET_N:     { v: 40,  label: '점유 표본 하한', desc: '결정적 집계의 브랜드 언급이 이 값보다 적으면 점유를 "표본 부족(참고용)"으로 표시. n=40이면 점유 추정 오차가 약 ±15%p(95%)' },
     LEAD_SEPARATED:     { v: 0.95, label: '유의한 우세', desc: '결정적 집계에서 1위 점유의 Wilson 95% 하한이 2위 점유의 95% 상한보다 높으면(두 구간이 겹치지 않음) "유의한 우세"' },
+    NEW_TERM_WEEKS:     { v: 4,   label: '사전 추가 직후', desc: '키워드 사전에 새로 넣은 용어는 정식 수집 주차부터 이 주 수 동안 관찰 중. 추가 전에는 이 용어만 언급한 게시물을 저장하지 않아 과거 건수가 하한이라 급등이 부풀려질 수 있음 (첫 주는 일부만 새 기준으로 수집돼 연속 이력 3주 + 1)' },
     VIRAL_SHARE:        { v: 0.8, label: '단일 게시물 의존', desc: '키워드 게시물 조회수 중 1위 게시물 비중이 이 값 이상이면 관찰 중 — 바이럴 영상 하나가 신호를 만든 경우' },
   };
   const SPONSOR_RE = /(#ad\b|#sponsored|partner|#광고|\[광고\]|쿠팡\s?파트너스|supported by|gifted|할인\s?코드|discount code|promo code|use code|code\s*[:：]\s*[a-z0-9]{3,})/i;
@@ -102,6 +103,9 @@
       reasons.push(`급등 의심: ${prev[0].slice(5)} 대비 engagement ${Math.round(t.eng / prev[1])}배, 게시물 ${t.posts}건`);
     if (t.top_post_share !== null && t.top_post_share !== undefined && t.top_post_share >= RULES.VIRAL_SHARE.v)
       reasons.push(`단일 게시물 의존: 조회수의 ${pct(t.top_post_share)}가 게시물 1개`);
+    const since = (META.added_terms || {})[t.kw];
+    if (since && w.week >= since && weekOrd(w.week) - weekOrd(since) < RULES.NEW_TERM_WEEKS.v)
+      reasons.push(`사전 추가 직후: ${since.slice(5)}부터 정식 수집 — 이전 건수는 하한이라 상승이 부풀려질 수 있음`);
     const m = mentionsOf(w, t.kw);
     // 판단 보류는 대화 점유 판정과 같은 집계(결정적, 없으면 LLM)의 언급 수로 본다
     const nMention = t.det && t.det.total !== undefined ? t.det.total : m.total;
@@ -197,6 +201,17 @@
     return Object.values(m).sort((a, b) => b.t.z - a.t.z);
   }
 
+  // 키워드 사전 관리: 사람이 승인한 추가 용어 + 이번 주 사전 밖 용어 후보 (승인은 서버 CLI)
+  function termCard() {
+    const added = Object.entries(META.added_terms || {}), cand = META.term_candidates || {};
+    const items = cand.items || [];
+    return card('키워드 사전', `시작 사전(코드) + 사람이 승인한 추가 용어. 원문은 사전과 무관하게 전부 저장하므로, 승인하면 과거 주차도 원문에서 다시 셉니다. 후보는 판정 없이 이번 주 게시물 수 순(5건 이상, 트렌드 후보와 같은 하한)이고, 거절한 말은 다시 나오지 않습니다.`,
+      `<p><b>승인된 추가 용어 ${added.length}</b> ${added.map(([k, w]) => `<span class="chip" title="정식 집계 ${esc(w)}~">${esc(kwName(k))} <small class="muted">${esc(w.slice(5))}~</small></span>`).join('') || '<span class="muted">없음</span>'}</p>
+       ${items.length ? `<p><b>사전 밖 용어 후보</b> <span class="muted small">${esc(cand.week)} · 승인: <code>python main.py term approve &lt;용어&gt;</code> · 거절: <code>term reject</code></span></p>
+       <div class="tbl-wrap"><table><thead><tr><th>#</th><th>용어</th><th class="num">이번 주 게시물</th><th class="num">직전 평균</th><th class="num">이전 등장 주</th></tr></thead><tbody>
+       ${items.map((r, i) => `<tr><td>${i + 1}</td><td><b>${esc(r.term)}</b></td><td class="num">${fmt(r.posts)}</td><td class="num">${r.prev_avg ?? '—'}</td><td class="num">${r.weeks_seen}</td></tr>`).join('')}
+       </tbody></table></div>` : '<p class="muted">후보 없음 (주간 실행 때 갱신)</p>'}`);
+  }
   // 월간 표 아래: 트렌드가 아닌 주요 키워드 한 줄
   const otherNote = ts => ts.length ? `<div class="other-note" style="margin-top:8px">주요 키워드(트렌드 아님): ${ts.map(t => esc(kwName(t.kw))).join(', ')}</div>` : '';
   // ── 공통 조각 ──
@@ -237,10 +252,12 @@
         ${card(mode === 'week' ? '이번 주 판단' : '이번 달 판단', `'판단 가능' 트렌드 중 z-score 상위 3개. 판단 가능 = 표본·이력·급등 경고 없음 + K-브랜드 언급 ${RULES.MIN_MENTIONS.v}건 이상 (방법론 › 화면 표시 규칙)${inGrace(last.week) ? ` · <b>초기 운영 기간(${RULES.HISTORY_GRACE_FROM.v.slice(5)}~${RULES.HISTORY_GRACE_UNTIL.v.slice(5)}): 연속 수집 이력 기준 유예</b>` : ''}`,
           ok.length ? `<ol class="judge">${ok.map(line).join('')}</ol>`
             : !pt.length ? `<div class="empty left">${mode === 'week' ? '이번 주' : '이 기간'} 트렌드 없음 — 급등(z ≥ ${RULES.SURGE_Z.v})이나 끊김 없는 3주 연속 상승 기준을 넘은 키워드가 없습니다.${others.length ? `<br><span class="muted">게시물이 많은 키워드 ${others.length}개를 대신 분석해 아래 '주요 키워드'에 두었습니다.</span>` : ''}</div>`
-            : `<div class="empty left">판단 가능한 트렌드가 없습니다. 모든 트렌드에 경고가 있어 아래 '관찰 중'에 모았습니다.<br>
-               <span class="muted">${last.week === WEEKS[WEEKS.length - 1].week
-                 ? `수집 주차가 띄엄띄엄이라(연속 ${RULES.MIN_CONSEC_WEEKS.v}주 미만) 이력 경고가 붙습니다. 매주 자동 수집이 이어지면 ${nextOk}부터 판단 가능한 트렌드가 나올 수 있습니다.`
-                 : `이 기간은 앞뒤 수집이 비어 있어(연속 ${RULES.MIN_CONSEC_WEEKS.v}주 미만) 이력 경고가 붙었습니다.`}</span></div>`)}
+            : `<div class="empty left">판단 가능한 트렌드가 없습니다. 트렌드 ${pt.length}개${pt.length > 1 ? ' 모두' : '에'} 아래 경고가 있어 '관찰 중'에 두었습니다.
+               <ul class="why">${pt.map(x => `<li><b>${esc(kwName(x.t.kw))}</b> — ${esc(x.tr.reasons.join(' · '))}</li>`).join('')}</ul>
+               ${pt.some(x => x.tr.reasons.some(r => r.startsWith('이력 짧음')))
+                 ? `<span class="muted">${last.week === WEEKS[WEEKS.length - 1].week
+                     ? `이력 경고는 매주 수집이 이어지면 ${nextOk}부터 풀립니다.`
+                     : '이 기간은 앞뒤 수집이 비어 있어 이력 경고가 붙었습니다.'}</span>` : ''}</div>`)}
         ${card(`관찰 중 ${watch.length}`, '경고가 붙은 트렌드. 칩에 마우스를 올리면 사유가 보입니다.',
           watch.length ? watch.map(x => `<a class="chip watch-chip ${x.tr.state}" href="?${mode === 'week' ? 'w' : 'm'}=${k}#trends" data-kw="${esc(x.t.kw)}" title="${esc(x.tr.reasons.join('\n'))}">
             ${esc(kwName(x.t.kw))} <small>${TRUST[x.tr.state].label}</small></a>`).join('') : empty('없음'))}
@@ -577,7 +594,8 @@
         <div class="tbl-wrap"><table><thead><tr><th>주차</th><th>키워드</th><th>잡은 쪽</th><th>유형</th><th>무엇이 틀렸나</th></tr></thead><tbody>
         ${grouped.map(({ f, k, by, raw }) => `<tr><td>${f.week.slice(5)}</td><td><b>${esc(kwName(f.keyword))}</b></td><td>${[...by].join(' + ')}</td>
           <td>${tag(esc(FAIL_TYPE[k] || k), 'review')}</td><td title="${esc(raw.map(x => `[${x.checker === 'rule' ? '규칙' : 'LLM'}] ${x.target}: ${x.detail}`).join('\n'))}">${esc(failPlain(f))}</td></tr>`).join('')}
-        </tbody></table></div>` : empty('없음'))}`, () => {
+        </tbody></table></div>` : empty('없음'))}
+      ${termCard()}`, () => {
       if (!vw.length) return;
       const r = w => { const x = valid([w]); return [x.ruleRate, x.llmRate].map(y => y === null ? null : +(y * 100).toFixed(1)); };
       chart(document.getElementById('vchart'), { type: 'line',

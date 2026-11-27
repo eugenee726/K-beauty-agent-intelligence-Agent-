@@ -11,6 +11,12 @@ K-Beauty Intelligence Agent v3 — CLI 진입점.
   python main.py report            # 리포트만 생성
   python main.py reshape                    # 저장된 전 주차의 트렌드 모양만 현재 규칙으로 재계산
   python main.py reshape --week 2026-W47    # 지정 주차만 (LLM·VOC·리포트는 건드리지 않음)
+  python main.py backfill-terms [--dry-run] # 사전에 새로 넣은 용어의 과거 주차 신호를 저장된 원문에서 채움
+  python main.py term-coverage --week 2026-W49  # 새 용어 게시물 중 기존 사전 용어가 없는 비율 (과거 하한 영향 확인)
+  python main.py term candidates [--week W]  # 사전 밖 용어 후보 (기본: 원문이 있는 마지막 주차)
+  python main.py term approve pdrn collagen --category 성분 --note "근거"  # 사전에 추가 + 과거 주차 재집계
+  python main.py term reject glow makeup     # 후보에서 다시 보이지 않게
+  python main.py term list                   # 승인·거절된 용어
   python main.py build-catalog     # 카탈로그 구축 (월 1회)
   python main.py build-catalog --platforms oy_global sephora
 
@@ -92,6 +98,58 @@ def print_summary(result: dict) -> None:
     print("=" * 55 + "\n")
 
 
+def run_term_command(db_path: str, action: str, terms: list[str], week: str | None,
+                     category: str | None, note: str | None) -> None:
+    """사전 관리: 후보 보기·승인·거절·목록. 승인하면 저장된 원문에서 과거 주차 신호를 채운다."""
+    import sqlite3
+    from datetime import date
+    from tools.collect.sns_terms import TERM_SCHEMA
+    from tools.collect.youtube_tool import YouTubeTool
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(TERM_SCHEMA)
+        if action == "list":
+            rows = conn.execute("SELECT term, status, category, added_week, source, note FROM dim_term "
+                                "ORDER BY status, added_week, term").fetchall()
+            print("\n승인·거절된 용어 (시작 사전은 코드의 GENERIC_TERMS):")
+            for r in rows:
+                print("  " + " | ".join(str(x or "") for x in r))
+            return
+        if action == "candidates":
+            from tools.analyze.term_candidates import TermCandidates
+            wk = week or conn.execute("SELECT MAX(week) FROM fact_sns_raw").fetchone()[0]
+            rows = TermCandidates(db_path).run(wk)
+            print(f"\n{wk} 사전 밖 용어 후보 (이번 주 게시물 수 · 직전 평균 · 이전 등장 주 수):")
+            for i, r in enumerate(rows, 1):
+                print(f"  {i:2d}. {r['term']:24s} {r['posts']:4d} · {r['prev_avg']} · {r['weeks_seen']}")
+            return
+        terms = [t.strip().lower().replace("_", " ") for t in terms]
+        if action == "reject":
+            for t in terms:
+                conn.execute("""INSERT INTO dim_term (term, status, source, note) VALUES (?, 'rejected', 'manual', ?)
+                                ON CONFLICT(term) DO UPDATE SET status='rejected', note=excluded.note,
+                                decided_at=datetime('now')""", (t, note))
+            print(f"\n거절: {', '.join(terms)} (후보 목록에 다시 나오지 않음)")
+            return
+        # approve: 다음 수집 주차부터 정식 집계 (일간 수집이 오늘 이후 게시물을 넣는 주차)
+        added_week = YouTubeTool.run_week_of(date.today())
+        cand_week = conn.execute("SELECT MAX(week) FROM fact_term_candidates").fetchone()[0] \
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name='fact_term_candidates'").fetchone() else None
+        for t in terms:
+            in_cand = cand_week and conn.execute(
+                "SELECT 1 FROM fact_term_candidates WHERE week=? AND term=?", (cand_week, t)).fetchone()
+            conn.execute("""INSERT INTO dim_term (term, status, category, added_week, source, note)
+                            VALUES (?, 'active', ?, ?, ?, ?)
+                            ON CONFLICT(term) DO UPDATE SET status='active', category=excluded.category,
+                            added_week=excluded.added_week, source=excluded.source, note=excluded.note,
+                            decided_at=datetime('now')""",
+                         (t, category, added_week, f"candidate:{cand_week}" if in_cand else "manual", note))
+    from tools.collect.backfill_terms import backfill
+    out = backfill(db_path, terms)
+    print(f"\n승인: {', '.join(terms)} (정식 집계 {added_week}~) · 과거 주차 재집계:")
+    for wk, kws in out.items():
+        print(f"  {wk}: " + ", ".join(f"{k} {n}" for k, n in sorted(kws.items(), key=lambda x: -x[1])))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog        = "kbeauty-agent",
@@ -99,14 +157,21 @@ def main() -> None:
     )
     parser.add_argument(
         "mode",
-        choices = ["full", "collect", "analyze", "decide", "report", "reshape", "build-catalog"],
+        choices = ["full", "collect", "analyze", "decide", "report", "reshape", "backfill-terms", "term-coverage", "term", "build-catalog"],
         help    = "실행 모드",
     )
+    parser.add_argument(
+        "terms",
+        nargs   = "*",
+        help    = "term 모드 전용: 동작(list|candidates|approve|reject) 다음에 용어들",
+    )
+    parser.add_argument("--category", default=None, help="term approve 전용: 성분 | 제품유형 | 고민 | 루틴 | 기타")
+    parser.add_argument("--note", default=None, help="term approve/reject 전용: 근거 메모")
     parser.add_argument(
         "--week",
         default = None,
         metavar = "YYYY-WNN",
-        help    = "analyze / decide / reshape 전용: ISO 주차 (예: 2026-W20). 생략 시 달력 기준 현재 주",
+        help    = "analyze / decide / reshape / term-coverage 전용: ISO 주차 (예: 2026-W20). 생략 시 달력 기준 현재 주",
     )
     parser.add_argument(
         "--platforms",
@@ -129,6 +194,12 @@ def main() -> None:
         help    = "Sephora Playwright 성분 스크랩 비활성화 (build-catalog 한정)",
     )
     parser.add_argument(
+        "--dry-run",
+        action  = "store_true",
+        default = False,
+        help    = "backfill-terms 한정: DB에 쓰지 않고 추가될 건수만 출력",
+    )
+    parser.add_argument(
         "--log-level",
         default = "INFO",
         choices = ["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -146,8 +217,16 @@ def main() -> None:
     logger = logging.getLogger("main")
     logger.info(f"실행 모드: {args.mode}")
 
-    if args.week is not None and args.mode not in ("analyze", "decide", "reshape"):
-        parser.error("--week 는 analyze / decide / reshape 모드에서만 사용할 수 있습니다.")
+    if args.week is not None and args.mode not in ("analyze", "decide", "reshape", "term-coverage", "term"):
+        parser.error("--week 는 analyze / decide / reshape / term-coverage / term 모드에서만 사용할 수 있습니다.")
+    if args.terms and args.mode != "term":
+        parser.error(f"알 수 없는 인자: {' '.join(args.terms)}")
+    if args.mode == "term" and (not args.terms or args.terms[0] not in ("list", "candidates", "approve", "reject")):
+        parser.error("term 다음에 list | candidates | approve | reject 중 하나가 필요합니다.")
+    if args.mode == "term" and args.terms[0] in ("approve", "reject") and len(args.terms) < 2:
+        parser.error(f"term {args.terms[0]} 다음에 용어가 필요합니다.")
+    if args.mode == "term-coverage" and args.week is None:
+        parser.error("term-coverage 는 --week 가 필요합니다.")
 
     analysis_week: str | None = None
     if args.week is not None:
@@ -209,6 +288,22 @@ def main() -> None:
             print(f"  {wk}: {len(changed)}건 변경")
             for kw, old, new in changed:
                 print(f"    {kw}: {old} → {new}")
+
+    elif args.mode == "backfill-terms":
+        from tools.collect.backfill_terms import backfill
+        out = backfill(orch.db_path, dry_run=args.dry_run)
+        print(f"\n새 용어 과거 신호 {'(dry-run, 쓰지 않음)' if args.dry_run else '추가'}: 주차별 게시물 수")
+        for wk, kws in out.items():
+            print(f"  {wk}: " + ", ".join(f"{k} {n}" for k, n in sorted(kws.items(), key=lambda x: -x[1])))
+
+    elif args.mode == "term-coverage":
+        from tools.collect.backfill_terms import coverage
+        print(f"\n{analysis_week} 새 용어 게시물 중 기존 사전 용어가 없는 게시물 (추가 전 규칙이면 저장 안 됐을 것):")
+        for k, (n, only) in sorted(coverage(orch.db_path, analysis_week).items(), key=lambda x: -x[1][0]):
+            print(f"  {k:14s} {only:4d} / {n:4d}" + (f"  ({only / n:.0%})" if n else ""))
+
+    elif args.mode == "term":
+        run_term_command(orch.db_path, args.terms[0], args.terms[1:], analysis_week, args.category, args.note)
 
     elif args.mode == "build-catalog":
         scrape = not args.no_scrape

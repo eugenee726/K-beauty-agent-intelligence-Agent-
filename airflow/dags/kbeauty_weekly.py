@@ -150,6 +150,13 @@ def kbeauty_weekly():
         except Exception as e:
             log.error(f"검증 반영 리포트 재생성 실패: {e}")
 
+        # 사전 밖 용어 후보 (사람이 주 1회 검토·승인: python main.py term approve ...)
+        try:
+            from tools.analyze.term_candidates import TermCandidates
+            out["term_candidates"] = len(TermCandidates("db/kbeauty.db").run(status["week"]))
+        except Exception as e:
+            log.error(f"용어 후보 생성 실패: {e}")
+
         # 전체 주차 대시보드(dashboard/) 갱신 — 주·월 선택 가능한 정적 웹앱
         try:
             from tools.report.dashboard_builder import DashboardBuilder

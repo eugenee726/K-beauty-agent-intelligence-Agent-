@@ -119,6 +119,10 @@ class MomentumTool:
         if sns_all.empty:
             return pd.DataFrame()
 
+        # 품질 검사 하한 미달 주차는 비교 주차에서 뺀다 (stats_tool z 기준선과 같은 기준)
+        from tools.quality.data_quality import sns_failed_weeks
+        sns_all = sns_all[~sns_all["week"].isin(sns_failed_weeks(self.db_path) - {week})]
+
         # 수집량 변화(검색어 추가·일간 수집·해시태그 수량 조정)에 흔들리지 않도록
         # engagement 를 그 주 전체 키워드 engagement 대비 비중으로 바꿔 추세를 본다.
         week_total = sns_all.groupby("week")["engagement"].transform("sum")
