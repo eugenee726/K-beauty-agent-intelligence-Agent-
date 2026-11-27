@@ -67,7 +67,12 @@ QUAD = {"PUSH_NOW": "긍정 리뷰 + 별점 상승 → 확대", "FIX_AND_PUSH": 
 SHAPE = {"spike": "이번 주 급등", "sustained": "3주 연속 상승", "emerging": "신규 등장", "steady": "꾸준한 수요(트렌드 기준 미달)"}
 OPP = {"leader": "우세", "contested": "각축", "white_space": "공백"}
 
-_FORBIDDEN = ("우리", "자사", "당사")
+_FORBIDDEN = ("우리", "자사", "당사", "None", "null")   # None/null = 빈 값이 그대로 옮겨진 것
+
+
+def _v(x) -> str:
+    """근거에 넣는 값: 없으면 '없음' (None 이 문장에 그대로 옮겨지지 않게)."""
+    return "없음" if x is None or x == "" else str(x)
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
 _WEEK = re.compile(r"(?:\d{4}-)?W\d{1,2}(?!\d)", re.IGNORECASE)   # \b 는 '49에'처럼 한글이 붙으면 안 맞음
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"|“[^”]*”|‘[^’]*’")
@@ -115,7 +120,7 @@ def trend_prompt(conn, week: str, kw: str, row: dict, patterns) -> str:
     lead = row.get("lead_platform")
     channel = ("TikTok·YouTube 동시" if row.get("is_cross_platform") else ("TikTok 중심" if lead == "tiktok" else "YouTube 중심")) if lead else "—"
     return f"""[키워드] {plain}
-[모양] {SHAPE.get(row.get('trend_shape'), row.get('trend_shape'))} (z {row.get('z_score')}, 모멘텀 {row.get('momentum_score')}배)
+[모양] {SHAPE.get(row.get('trend_shape'), row.get('trend_shape'))} (z {_v(row.get('z_score'))}, 모멘텀 {_v(row.get('momentum_score'))}배)
 [대화 점유] {OPP.get(row.get('opportunity_type'), row.get('opportunity_type'))} — 캡션 속 K-브랜드 언급 {total}건 중 {share}
 [소비자 니즈] {row.get('consumer_need') or ''}
 [소비자 표현] {(ins[0] if ins and ins[0] else '')}
@@ -140,7 +145,7 @@ def product_prompt(conn, week: str, row: dict) -> str | None:
     j = lambda v: ", ".join(json.loads(v or "[]"))
     return f"""[제품] {row['brand_name_en']} {row['product_name_en']}
 [현재 분면] {row['strategy_quad']} — {QUAD.get(row['strategy_quad'], '')}
-[지표] 리뷰 긍정 {row['sentiment_pos']} · 부정 {row['sentiment_neg']} · 평균 별점 {row['avg_rating']} · 별점 주간 변화 {row.get('rating_trend')} · 리뷰 유입 {row.get('voc_velocity')} · OY 주문 순위 {row['oy_rank_orders']} · OY 한국 순위 {row['oy_rank_korea']}
+[지표] 리뷰 긍정 {_v(row['sentiment_pos'])} · 부정 {_v(row['sentiment_neg'])} · 평균 별점 {_v(row['avg_rating'])} · 별점 주간 변화 {_v(row.get('rating_trend'))} · 리뷰 유입 {_v(row.get('voc_velocity'))} · OY 주문 순위 {_v(row['oy_rank_orders'])} · OY 한국 순위 {_v(row['oy_rank_korea'])}
 [긍정 키워드] {j(row['pos_keywords'])}
 [부정 키워드] {j(row['neg_keywords'])}
 [개선 니즈] {j(row['needs_keywords'])}
