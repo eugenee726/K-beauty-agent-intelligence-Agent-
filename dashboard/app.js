@@ -186,14 +186,19 @@
     return { ...v, rate: n ? (v.rule.pass + v.llm.pass) / n : null, fails: v.rule.fail + v.llm.fail,
              ruleRate: tot(v.rule) ? v.rule.pass / tot(v.rule) : null, llmRate: tot(v.llm) ? v.llm.pass / tot(v.llm) : null };
   }
+  // 트렌드 = 파이프라인 판정이 급등(spike) 또는 지속 상승(sustained)인 키워드.
+  // 그 외(완만·정체)는 후보가 없는 주에 게시물 순으로 대신 분석한 '주요 키워드(트렌드 아님)'로 따로 보여 준다.
+  const isTrend = t => t.shape === 'spike' || t.shape === 'sustained';
   // 기간 안 트렌드(월간은 키워드별 마지막 등장 주차 값)
-  function periodTrends(ws) {
+  function periodTrends(ws, pick = isTrend) {
     const m = {};
-    ws.forEach(w => w.trends.forEach(t => { const prev = m[t.kw];
+    ws.forEach(w => w.trends.filter(pick).forEach(t => { const prev = m[t.kw];
       m[t.kw] = { t, w, tr: trustOf(w, t), weeks: [...(prev ? prev.weeks : []), w.week], zmax: Math.max(prev ? prev.zmax : -Infinity, t.z) }; }));
     return Object.values(m).sort((a, b) => b.t.z - a.t.z);
   }
 
+  // 월간 표 아래: 트렌드가 아닌 주요 키워드 한 줄
+  const otherNote = ts => ts.length ? `<div class="other-note" style="margin-top:8px">주요 키워드(트렌드 아님): ${ts.map(t => esc(kwName(t.kw))).join(', ')}</div>` : '';
   // ── 공통 조각 ──
   const card = (title, hint, body, extra = '') => `<section class="card" ${extra}><h3>${title}</h3>${hint ? `<div class="hint">${hint}</div>` : ''}${body}</section>`;
   const empty = msg => `<div class="empty">${msg}</div>`;
@@ -214,6 +219,7 @@
   function pageOverview(mode, k) {
     const ws = periodWeeks(mode, k);
     const pt = periodTrends(ws);
+    const others = periodTrends(ws, t => !isTrend(t));
     const ok = pt.filter(x => x.tr.state === 'ok').slice(0, 3);
     const watch = pt.filter(x => x.tr.state !== 'ok');
     const surge = pt.filter(x => strength(x.t) === '급등').length;
@@ -230,6 +236,7 @@
       <div class="grid-main tight">
         ${card(mode === 'week' ? '이번 주 판단' : '이번 달 판단', `'판단 가능' 트렌드 중 z-score 상위 3개. 판단 가능 = 표본·이력·급등 경고 없음 + K-브랜드 언급 ${RULES.MIN_MENTIONS.v}건 이상 (방법론 › 화면 표시 규칙)${inGrace(last.week) ? ` · <b>초기 운영 기간(${RULES.HISTORY_GRACE_FROM.v.slice(5)}~${RULES.HISTORY_GRACE_UNTIL.v.slice(5)}): 연속 수집 이력 기준 유예</b>` : ''}`,
           ok.length ? `<ol class="judge">${ok.map(line).join('')}</ol>`
+            : !pt.length ? `<div class="empty left">${mode === 'week' ? '이번 주' : '이 기간'} 트렌드 없음 — 급등(z ≥ ${RULES.SURGE_Z.v})이나 끊김 없는 3주 연속 상승 기준을 넘은 키워드가 없습니다.${others.length ? `<br><span class="muted">게시물이 많은 키워드 ${others.length}개를 대신 분석해 아래 '주요 키워드'에 두었습니다.</span>` : ''}</div>`
             : `<div class="empty left">판단 가능한 트렌드가 없습니다. 모든 트렌드에 경고가 있어 아래 '관찰 중'에 모았습니다.<br>
                <span class="muted">${last.week === WEEKS[WEEKS.length - 1].week
                  ? `수집 주차가 띄엄띄엄이라(연속 ${RULES.MIN_CONSEC_WEEKS.v}주 미만) 이력 경고가 붙습니다. 매주 자동 수집이 이어지면 ${nextOk}부터 판단 가능한 트렌드가 나올 수 있습니다.`
@@ -238,6 +245,8 @@
           watch.length ? watch.map(x => `<a class="chip watch-chip ${x.tr.state}" href="?${mode === 'week' ? 'w' : 'm'}=${k}#trends" data-kw="${esc(x.t.kw)}" title="${esc(x.tr.reasons.join('\n'))}">
             ${esc(kwName(x.t.kw))} <small>${TRUST[x.tr.state].label}</small></a>`).join('') : empty('없음'))}
       </div>
+      ${others.length ? card(`주요 키워드 (트렌드 아님) ${others.length}`, '트렌드 기준(급등·지속 상승)은 넘지 못했지만 게시물이 많아 니즈를 분석한 키워드. 참고용이며 위 판단에는 넣지 않습니다.',
+        others.map(kwChip).join(' ')) : ''}
       <div class="kpis">
         <div class="kpi"><div class="label">급등 <span class="muted small">z ≥ ${RULES.SURGE_Z.v}</span></div><div class="val">${surge}</div>
           <div class="kwchips">${pt.filter(x => strength(x.t) === '급등').map(kwChip).join('') || '<span class="muted small">없음</span>'}</div></div>
@@ -315,10 +324,11 @@
           <th class="num">최고 z</th><th>모양</th><th>대화 점유</th><th>신뢰</th></tr></thead><tbody>
           ${pt.map(x => `<tr><td><b>${esc(kwName(x.t.kw))}</b></td>${ws.map(w => `<td class="c">${x.weeks.includes(w.week) ? '●' : ''}</td>`).join('')}
             <td class="num">${zf(x.zmax)}</td><td>${shapeTag(x.t)}</td><td>${tag(esc(oppView(x.t, x.tr).label), 'opp')}</td><td>${trustTag(x.tr)}</td></tr>`).join('')}
-          </tbody></table></div>` : empty('트렌드 없음')), null];
+          </tbody></table></div>` : empty('트렌드 없음')) + otherNote(periodTrends(ws, t => !isTrend(t)).map(x => x.t)), null];
     }
     const w = ws[0];
-    const items = w.trends.map((t, i) => ({ t, i, tr: trustOf(w, t) }));
+    const all = w.trends.map((t, i) => ({ t, i, tr: trustOf(w, t) }));
+    const items = all.filter(x => isTrend(x.t)), rest = all.filter(x => !isTrend(x.t));
     const oppKey = x => x.tr.state === 'hold' ? 'hold' : x.t.opp;
     const counts = {}; items.forEach(x => counts[oppKey(x)] = (counts[oppKey(x)] || 0) + 1);
     const types = w.legacy ? Object.keys(counts) : ['leader', 'contested', 'white_space', 'hold'];
@@ -338,16 +348,19 @@
         (oppFilter !== 'ALL' ? `<div class="legend-line">${esc(label(oppFilter))} 트렌드만 표시 중 · 위 카드를 다시 누르면 전체</div>` : '') +
         (shown.length ? `<div style="position:relative;height:340px"><canvas id="radar"></canvas></div><ol class="radar-legend">${shown.map(x =>
           `<li data-i="${x.i}"><b>${x.i + 1}</b> ${esc(kwName(x.t.kw))} <span class="muted">z ${zf(x.t.z)} · ${momf(x.t.mom)}</span></li>`).join('')}</ol>` : empty(items.length ? '이 유형에 해당하는 트렌드 없음' : '트렌드 없음')))}
-      ${shown.map(x => trendCard(w, x.t, x.i, dup)).join('')}`;
+      ${shown.map(x => trendCard(w, x.t, x.i, dup)).join('')}
+      ${rest.length ? `<h3 class="section-sub">주요 키워드 (트렌드 아님) ${rest.length}</h3>
+        <div class="hint">급등·지속 상승 기준을 넘지 못했지만 게시물이 많아 니즈를 분석한 키워드입니다. 참고용입니다.</div>
+        ${rest.map(x => trendCard(w, x.t, x.i, dup)).join('')}` : ''}`;
     return [html, () => {
       document.querySelectorAll('.stat[data-opp]').forEach(el => el.onclick = () => { oppFilter = oppFilter === el.dataset.opp ? 'ALL' : el.dataset.opp; render(); });
       document.querySelectorAll('.tc-toggle').forEach(b => b.onclick = () => { const c = b.closest('.tcard'); c.classList.toggle('open'); b.textContent = c.classList.contains('open') ? '접기 ▲' : '자세히 ▼'; });
       const focus = i => { const el = document.getElementById('t_' + i); if (!el) return; el.classList.add('open', 'flash');
         el.querySelector('.tc-toggle').textContent = '접기 ▲'; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => el.classList.remove('flash'), 1500); };
       document.querySelectorAll('.radar-legend li').forEach(li => li.onclick = () => focus(li.dataset.i));
-      if (openKw) { const x = items.find(y => y.t.kw === openKw); if (x) setTimeout(() => focus(x.i), 50); openKw = null; }
+      if (openKw) { const x = all.find(y => y.t.kw === openKw); if (x) setTimeout(() => focus(x.i), 50); openKw = null; }
       // 스파크라인: x = 실제 주차 간격, 빈 주차 구간은 점선
-      shown.forEach(x => {
+      shown.concat(rest).forEach(x => {
         const pts = x.t.hist.map(h => ({ x: weekOrd(h[0]), y: h[1], wk: h[0] }));
         chart(document.getElementById('sp_' + x.i), { type: 'line',
           data: { datasets: [{ data: pts, borderColor: DARK, borderWidth: 1.5, pointRadius: 2, pointBackgroundColor: DARK, tension: 0,
@@ -547,7 +560,7 @@
       <div class="kpis">
         <div class="kpi"><div class="label">분석한 SNS 게시물</div><div class="val">${fmt(sum(Object.values(plat)))}</div><div class="delta">TikTok ${fmt(plat.tiktok || 0)} · YouTube ${fmt(plat.youtube || 0)}</div></div>
         <div class="kpi"><div class="label">랭킹 제품</div><div class="val">${fmt(last.kpi.ranked)}</div><div class="delta">브랜드 ${fmt(last.kpi.ranked_brands)}개 · ${last.week}</div></div>
-        <div class="kpi"><div class="label">트렌드 후보 → 선정</div><div class="val">${sum(ws.map(w => w.trends.length))}</div><div class="delta">z 급등 ∪ 지속 상승, 최대 10개/주</div></div>
+        <div class="kpi"><div class="label">트렌드 후보 → 선정</div><div class="val">${sum(ws.map(w => w.trends.filter(isTrend).length))}</div><div class="delta">z 급등 ∪ 지속 상승, 최대 10개/주 · 주요 키워드(트렌드 아님) ${sum(ws.map(w => w.trends.filter(t => !isTrend(t)).length))}</div></div>
         <div class="kpi"><div class="label">제품 인사이트</div><div class="val">${fmt(last.products.length)}</div><div class="delta">${last.week} 기준</div></div>
       </div>
       <div class="grid2">
@@ -616,7 +629,7 @@
              <div class="axis"><span>↑ z-score (게시물 비중)</span><span>모멘텀 (3개 데이터 주차 전 대비) →</span></div></div>
            <div class="rulelist">
              <div><span class="rk">순간 급등</span><span>게시물 비중 z ≥ <b>${RULES.SURGE_Z.v}</b> (과거 3개 데이터 주차 이상일 때)</span></div>
-             <div><span class="rk">지속 상승</span><span>3개 데이터 주차 연속 상승 + 모멘텀 ≥ <b>${RULES.SUSTAIN_MOMENTUM.v}배</b></span></div>
+             <div><span class="rk">지속 상승</span><span>끊김 없는 3주(ISO 주차, 빈 주 없음) 연속 상승 + 모멘텀 ≥ <b>${RULES.SUSTAIN_MOMENTUM.v}배</b></span></div>
              <div><span class="rk">제외</span><span>광의어(skincare 등) · 브랜드명 · 게시물 5건 미만</span></div>
              <div><span class="rk">engagement</span><span>TikTok 조회×0.3 + 좋아요×1 + 댓글×2 · YouTube 조회×0.2 + 좋아요×1.5 + 댓글×3</span></div>
            </div></div>`)}

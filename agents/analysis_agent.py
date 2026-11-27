@@ -27,16 +27,13 @@ import pandas as pd
 
 from memory.agent_memory import AgentMemory
 from tools.analyze.stats_tool       import StatsTool
-from tools.analyze.momentum_tool    import MomentumTool
+from tools.analyze.momentum_tool    import MomentumTool, is_sustained
 from tools.analyze.llm_insight_tool import LLMInsightTool
 
 logger = logging.getLogger(__name__)
 
 # LLM·Decision과 동일한 볼륨 하한
 MIN_POST_COUNT = StatsTool.MIN_POST_COUNT
-# 지속 상승 기준 (decision_agent.py 의 is_rising_trend 와 동일)
-SUSTAINED_WEEKS_RISING = 2
-SUSTAINED_MOMENTUM     = 1.5
 
 # LLM 후보에서 제외: 광의어 + 브랜드명 (브랜드는 brand_momentum·리포트 브랜드 집계에서 따로 다룬다)
 # 브랜드 부분은 dim_brand 에서 만든다 → _exclude_keywords()
@@ -175,12 +172,11 @@ class AnalysisAgent:
                 llm_pool_source = "anomaly"
 
                 # 지속 상승(sustained) 키워드도 후보에 포함 — decision_agent 의 trend_shape 와 같은 기준
-                # (최근 3개 데이터 주차 연속 상승 + 모멘텀 ≥ 1.5). z-score 는 '순간 급등'만 잡으므로
+                # (끊김 없는 3주 연속 상승 + 모멘텀 ≥ 1.5). z-score 는 '순간 급등'만 잡으므로
                 # 몇 주째 꾸준히 오르는 키워드(z < 2)가 빠지던 문제 보완.
                 if not momentum_df.empty and {"weeks_rising", "momentum_score"} <= set(momentum_df.columns):
                     sustained_kws = set(momentum_df.loc[
-                        (momentum_df["weeks_rising"] >= SUSTAINED_WEEKS_RISING)
-                        & (momentum_df["momentum_score"] >= SUSTAINED_MOMENTUM),
+                        is_sustained(momentum_df["weeks_rising"], momentum_df["momentum_score"]),
                         "keyword",
                     ].str.lower())
                     extra = sns_anomalies[

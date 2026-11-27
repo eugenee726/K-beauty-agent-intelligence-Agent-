@@ -35,7 +35,8 @@ from pathlib import Path
 import pandas as pd
 
 from memory.agent_memory import AgentMemory
-from tools.analyze.momentum_tool      import MomentumTool
+from tools.analyze.momentum_tool      import MomentumTool, is_sustained
+from tools.analyze.stats_tool         import StatsTool
 from tools.report.html_report_tool    import HTMLReportTool
 from tools.report.tableau_export_tool import TableauExportTool
 
@@ -59,6 +60,51 @@ TARGET_PRODUCTS_SQL = f"""
     JOIN dim_brand   b2 ON b2.brand_id   = p2.brand_id
     WHERE r.week = ? AND b2.is_tracked = 1 AND r.rank_position <= {TOP_RANK}
 """
+
+
+def classify_trend_shape(is_new_kw, weeks_rising, momentum_score, z_score) -> str:
+    """
+    트렌드 모양 분류 (opportunity_type과 독립된 축)
+      emerging : 이번 주 신규 등장 키워드
+      sustained: 끊김 없는 3주 연속 상승 + 모멘텀 ≥ 1.5 (momentum_tool.is_sustained)
+      spike    : 베이스라인 대비 순간 급등(z ≥ Z_ALERT)이나 지속성 없음
+      steady   : 그 외 (완만/정체) — 트렌드 기준 미달. 후보가 없는 주에 게시물 순으로 대신 분석한 키워드
+    """
+    if is_new_kw:
+        return "emerging"
+    if is_sustained(weeks_rising, momentum_score):
+        return "sustained"
+    if z_score >= StatsTool.Z_ALERT:
+        return "spike"
+    return "steady"
+
+
+def reshape_trends(db_path: str, week: str) -> list[tuple[str, str, str]]:
+    """
+    이미 저장된 주차의 trend_shape 만 현재 규칙으로 다시 계산한다.
+    LLM·VOC·제품 인사이트·리포트는 건드리지 않는다 (판정 규칙 수정 후 과거 주차 정정용).
+    z_score 는 저장값을 쓰고, 신규 등장(emerging)은 저장값을 유지한다.
+    반환: [(keyword, 이전 모양, 새 모양)] — 바뀐 것만
+    """
+    mom = MomentumTool(db_path).compute_momentum(week)
+    mom_map = ({r["keyword"].lower(): r for _, r in mom.iterrows()} if not mom.empty else {})
+    changed = []
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT id, keyword, z_score, trend_shape FROM fact_trend_insights WHERE week=?",
+                            (week,)).fetchall()
+        for r in rows:
+            m = mom_map.get(r["keyword"].lower())
+            new = classify_trend_shape(
+                r["trend_shape"] == "emerging",
+                int(m["weeks_rising"]) if m is not None else 0,
+                float(m["momentum_score"]) if m is not None else 0.0,
+                float(r["z_score"] or 0.0),
+            )
+            if new != r["trend_shape"]:
+                conn.execute("UPDATE fact_trend_insights SET trend_shape=? WHERE id=?", (new, r["id"]))
+                changed.append((r["keyword"], r["trend_shape"], new))
+    return changed
 
 
 class DecisionAgent:
@@ -170,22 +216,7 @@ class DecisionAgent:
             weeks_rising   = int(mom_row.get("weeks_rising", 0))
             z_score        = float(sns_row.get("z_score", 0.0) or 0.0)
             is_new_kw      = int(sns_row.get("is_new_keyword", 0) or 0)
-            # 최근 3주 연속 상승(weeks_rising==2)하며 누적 성장 시 상승 트렌드로 판단
-            is_rising_trend = weeks_rising >= 2 and momentum_score >= 1.5
-
-            # 트렌드 모양 분류 (opportunity_type과 독립된 축)
-            #   emerging : 이번 주 신규 등장 키워드
-            #   sustained: 최근 3주 지속 상승
-            #   spike    : 베이스라인 대비 순간 급등(z≥2)이나 지속성 없음
-            #   steady   : 그 외 (완만/정체)
-            if is_new_kw:
-                trend_shape = "emerging"
-            elif is_rising_trend:
-                trend_shape = "sustained"
-            elif z_score >= 2.0:
-                trend_shape = "spike"
-            else:
-                trend_shape = "steady"
+            trend_shape    = classify_trend_shape(is_new_kw, weeks_rising, momentum_score, z_score)
 
             # 캡션에 언급된 브랜드 (컬럼명 competitor_mentions 는 호환용, 의미는 '전체 브랜드 언급')
             try:

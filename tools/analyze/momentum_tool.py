@@ -10,7 +10,7 @@ momentum_tool.py
 분석 로직:
   A) 첫 등장 플랫폼 기록 (fact_trend_first_seen, lead 판단용)
   B) 모멘텀 스코어 = 현재 주 / 3주 전 engagement (최근 3주 성장 배수)
-  C) weeks_rising = 최근 3주 연속 상승 단계 수 (추세 지속성)
+  C) weeks_rising = 최근 3주 연속 상승 단계 수 (추세 지속성, 빈 주를 건너뛴 단계는 세지 않음)
   D) 교차 플랫폼 동시 상승 = 강한 기회 신호
 
 출력:
@@ -20,11 +20,28 @@ momentum_tool.py
 
 import sqlite3
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# 지속 상승 기준: 끊김 없는 3주 연속 상승(weeks_rising == 2) + 3주 전 대비 모멘텀 ≥ 1.5
+# (analysis_agent 후보 선정과 decision_agent trend_shape 가 같은 함수를 쓴다)
+SUSTAINED_WEEKS_RISING = 2
+SUSTAINED_MOMENTUM     = 1.5
+
+
+def is_sustained(weeks_rising, momentum_score):
+    """스칼라와 pandas Series 모두 받는다 (그래서 and 대신 &)."""
+    return (weeks_rising >= SUSTAINED_WEEKS_RISING) & (momentum_score >= SUSTAINED_MOMENTUM)
+
+
+def _week_gap(a: str, b: str) -> int:
+    """ISO 주차 a → b 사이 주 수 ('2026-W47' → '2026-W48' = 1)."""
+    da = date.fromisocalendar(*map(int, a.split("-W")), 1)
+    db = date.fromisocalendar(*map(int, b.split("-W")), 1)
+    return (db - da).days // 7
 
 
 class MomentumTool:
@@ -130,9 +147,11 @@ class MomentumTool:
             momentum = round(current_eng / window_start, 2) if window_start > 0 else 0.0
 
             # 연속 상승 단계 수 (상승 끊기면 리셋)
+            # 바로 다음 ISO 주차로 이어진 단계만 센다. 수집이 빈 주를 건너뛰면(W41→W45) 연속이 아니다.
+            wks = recent["week"].tolist()
             weeks_rising = 0
             for i in range(1, len(eng)):
-                if eng[i] > eng[i - 1]:
+                if _week_gap(wks[i - 1], wks[i]) == 1 and eng[i] > eng[i - 1]:
                     weeks_rising += 1
                 else:
                     weeks_rising = 0

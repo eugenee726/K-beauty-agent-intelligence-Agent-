@@ -9,6 +9,8 @@ K-Beauty Intelligence Agent v3 — CLI 진입점.
   python main.py analyze                    # 분석만 — 달력 기준 현재 ISO 주차
   python main.py analyze --week 2026-W20  # 분석만 — 지정 주차
   python main.py report            # 리포트만 생성
+  python main.py reshape                    # 저장된 전 주차의 트렌드 모양만 현재 규칙으로 재계산
+  python main.py reshape --week 2026-W47    # 지정 주차만 (LLM·VOC·리포트는 건드리지 않음)
   python main.py build-catalog     # 카탈로그 구축 (월 1회)
   python main.py build-catalog --platforms oy_global sephora
 
@@ -97,14 +99,14 @@ def main() -> None:
     )
     parser.add_argument(
         "mode",
-        choices = ["full", "collect", "analyze", "decide", "report", "build-catalog"],
+        choices = ["full", "collect", "analyze", "decide", "report", "reshape", "build-catalog"],
         help    = "실행 모드",
     )
     parser.add_argument(
         "--week",
         default = None,
         metavar = "YYYY-WNN",
-        help    = "analyze / decide 전용: ISO 주차 (예: 2026-W20). 생략 시 달력 기준 현재 주",
+        help    = "analyze / decide / reshape 전용: ISO 주차 (예: 2026-W20). 생략 시 달력 기준 현재 주",
     )
     parser.add_argument(
         "--platforms",
@@ -144,8 +146,8 @@ def main() -> None:
     logger = logging.getLogger("main")
     logger.info(f"실행 모드: {args.mode}")
 
-    if args.week is not None and args.mode not in ("analyze", "decide"):
-        parser.error("--week 는 analyze / decide 모드에서만 사용할 수 있습니다.")
+    if args.week is not None and args.mode not in ("analyze", "decide", "reshape"):
+        parser.error("--week 는 analyze / decide / reshape 모드에서만 사용할 수 있습니다.")
 
     analysis_week: str | None = None
     if args.week is not None:
@@ -194,6 +196,19 @@ def main() -> None:
         print_summary(result)
         if result.get("report_path"):
             print(f"\n  HTML 리포트: {result['report_path']}")
+
+    elif args.mode == "reshape":
+        import sqlite3
+        from agents.decision_agent import reshape_trends
+        with sqlite3.connect(orch.db_path) as conn:
+            weeks = [analysis_week] if analysis_week else [
+                r[0] for r in conn.execute("SELECT DISTINCT week FROM fact_trend_insights ORDER BY week")]
+        print("\n트렌드 모양 재계산 (바뀐 것만 표시):")
+        for wk in weeks:
+            changed = reshape_trends(orch.db_path, wk)
+            print(f"  {wk}: {len(changed)}건 변경")
+            for kw, old, new in changed:
+                print(f"    {kw}: {old} → {new}")
 
     elif args.mode == "build-catalog":
         scrape = not args.no_scrape
