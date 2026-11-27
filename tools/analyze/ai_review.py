@@ -54,14 +54,21 @@ TREND_SCHEMA = {"type": "object", "properties": {
     "review": {**_LINE, "description": "검토할 것: 대응할지 관찰할지, 대응한다면 어느 팀이 어떤 각도로 볼지 (실행 지시 금지)"},
     "watch": {**_LINE, "description": "확인: 다음 주에 볼 신호 하나"}},
     "required": ["meaning", "review", "watch"], "additionalProperties": False}
+# 제품은 표 한 칸에 들어가므로 두 줄만, 짧게, 명사형 종결 (2026-11-28 사용자 결정)
 PRODUCT_SCHEMA = {"type": "object", "properties": {
-    "situation": {**_LINE, "description": "상황: 지표와 리뷰로 본 현재 상태"},
-    "meaning": {**_LINE, "description": "의미: 리뷰가 말하는 핵심(좋은 점·걸림돌) + 표본 신뢰도"},
-    "review": {**_LINE, "description": "검토할 것: 어느 담당이 무엇을 검토할지 (실행 지시 금지)"},
-    "watch": {**_LINE, "description": "확인: 다음 주에 볼 신호 하나"}},
-    "required": ["situation", "meaning", "review", "watch"], "additionalProperties": False}
+    "situation": {**_LINE, "description": "상황: 지표로 본 현재 상태, 60자 안팎, 명사형 종결"},
+    "meaning": {**_LINE, "description": "해석: 리뷰가 말하는 강점·걸림돌 + 표본 신뢰도, 60자 안팎, 명사형 종결"}},
+    "required": ["situation", "meaning"], "additionalProperties": False}
+PRODUCT_STYLE = """
+제품 출력 규칙(위 줄 길이 규칙보다 우선):
+- 상황과 해석 두 줄만 쓴다. 각 줄 60자 안팎(최대 80자).
+- 명사형으로 끝낸다(명사 또는 ~함·~임 형태). '~다', '~요' 같은 서술형으로 끝내지 않는다.
+  예) 상황: OY 주문·한국 1위, 리뷰 유입 193건에도 별점 4.0 정체
+      해석: 진정·밀착 호평, 자극·붉어짐 후기가 걸림돌 · 표본 8건으로 약한 신호"""
+PRODUCT_MAX = 90
+_VERB_END = re.compile(r"(다|요)[.!]?$")   # 서술형 종결 (명사형 종결 위반)
 TREND_LABELS = (("meaning", "의미"), ("review", "검토할 것"), ("watch", "확인"))
-PRODUCT_LABELS = (("situation", "상황"), ("meaning", "의미"), ("review", "검토할 것"), ("watch", "확인"))
+PRODUCT_LABELS = (("situation", "상황"), ("meaning", "의미"))
 QUAD = {"PUSH_NOW": "긍정 리뷰 + 별점 상승 → 확대", "FIX_AND_PUSH": "불만 신호(별점 하락 또는 부정 35% 이상) → 개선 후 확대",
         "HOLD": "긍정이지만 별점 상승 없음 → 유지", "MONITOR": "그 외 → 관찰"}
 SHAPE = {"spike": "이번 주 급등", "sustained": "3주 연속 상승", "emerging": "신규 등장", "steady": "꾸준한 수요(트렌드 기준 미달)"}
@@ -154,7 +161,7 @@ def product_prompt(conn, week: str, row: dict) -> str | None:
 [리뷰]
 {chr(10).join(f"#{i} ({r[0] or '-'}점) {_clean(r[1], 260)}" for i, r in enumerate(revs, 1))}
 
-상황, 의미, 검토할 것, 확인을 각각 한 줄로 써라."""
+상황과 해석(의미)을 각각 한 줄로 써라.""" + PRODUCT_STYLE
 
 
 def _known(n: str, known: set[str]) -> bool:
@@ -179,7 +186,7 @@ def _known(n: str, known: set[str]) -> bool:
 
 
 # ── 안전장치: 지어낸 수치·근거 밖 브랜드·금지어·형식 ──
-def check(out: dict, prompt: str, patterns) -> list[str]:
+def check(out: dict, prompt: str, patterns, product: bool = False) -> list[str]:
     from tools.quality.insight_checks import _hangul_ratio
     issues = []
     known_nums = set(_NUM.findall(prompt))
@@ -202,8 +209,10 @@ def check(out: dict, prompt: str, patterns) -> list[str]:
         brands = {bid for p, bid in patterns if p.search(text.lower())} - prompt_brands
         if brands:
             issues.append(f"{key}: 근거 밖 브랜드 {sorted(brands)}")
-        if len(text) > MAX_LINE:
+        if len(text) > (PRODUCT_MAX if product else MAX_LINE):
             issues.append(f"{key}: 너무 김 ({len(text)}자)")
+        if product and _VERB_END.search(text):
+            issues.append(f"{key}: 서술형 종결 (명사형이어야 함)")
     return issues
 
 
@@ -234,7 +243,7 @@ class AIReviewWriter:
             out = self._ask(schema, prompt)
         except Exception as e:
             return None, [f"생성 실패: {type(e).__name__}: {e}"]
-        issues = check(out, prompt, patterns)
+        issues = check(out, prompt, patterns, product=(kind == "product"))
         if issues:
             return None, issues
         return "\n".join(f"{label}: {out[k].strip()}" for k, label in labels), []

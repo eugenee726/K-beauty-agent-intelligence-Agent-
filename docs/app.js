@@ -266,7 +266,9 @@
     const ls = (situation ? [situation] : []).concat(actionLines(a));
     return `<div class="act ai">${AI_TAG}<dl class="actlist">${ls.map(([k, v]) => `<dt>${esc(k || '')}</dt><dd>${esc(v)}</dd>`).join('')}</dl></div>`;
   }
-  const aiCell = (a, open) => `<details class="ai-cell" ${open ? 'open' : ''}><summary>${esc(aiLine(a, '검토할 것') || aiLine(a, '의미'))}</summary>${AI_TAG}<dl class="actlist">${actionLines(a).map(([k, v]) => `<dt>${esc(aiLabel(k))}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>`;
+  // 제품 칸: 접힌 줄 = 해석(예전 4줄 형식이면 검토할 것), 펼치면 나머지 줄(상황 등)
+  const aiCell = (a, open) => { const sk = aiLine(a, '검토할 것') ? '검토할 것' : '의미';
+    return `<details class="ai-cell" ${open ? 'open' : ''}><summary>${esc(aiLine(a, sk))}</summary>${AI_TAG}<dl class="actlist">${actionLines(a).filter(([k]) => k !== sk).map(([k, v]) => `<dt>${esc(aiLabel(k))}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>`; };
   // 점유 막대: 막대에는 색만, 브랜드명·건수·비율은 아래 범례에 (작은 칸에서 이름이 잘리지 않게)
   function shareBar(m) {
     if (!m.total) return '<div class="sharebar empty-bar">K-브랜드 언급 없음</div>';
