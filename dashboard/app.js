@@ -248,12 +248,25 @@
   // AI 해석: 마케터 역할 LLM 이 근거로 쓴 해석·검토 포인트 ('라벨: 내용' 줄). 판정이 아니라 참고용
   const aiLine = (a, label) => { const l = actionLines(a).find(([k]) => k === label); return l ? l[1] : ''; };
   const AI_TAG = '<span class="tag ai-tag" title="마케터 역할의 LLM이 근거(점유·니즈·캡션·리뷰)를 읽고 쓴 해석과 검토 포인트입니다. 판정이나 정답이 아니며, 지어낸 수치·근거 밖 브랜드는 코드로 걸러 냅니다.">AI 해석 · 참고용</span>';
+  const aiLabel = k => k === '의미' ? '해석' : (k || '');
+  // 트렌드 카드용 통합 블록: 상황(코드 판정) + AI 해석 + 참고 제품(제품 전략으로 연결)
+  const PROD_SHOW = 4;
+  function aiTrendBlock(w, t) {
+    const sit = actionLines(t.action).find(([k]) => k === '상황');
+    const ls = (sit ? [sit] : []).concat(actionLines(t.ai));
+    const ps = t.prods || [];
+    const links = ps.slice(0, PROD_SHOW).map(([pid, label, direct]) =>
+      `<a href="?w=${w.week}#products" class="chip prodlink" data-pid="${esc(pid)}" data-week="${w.week}" title="${direct ? '캡션에 직접 언급된 제품' : '니즈로 연결된 제품'} · 제품 전략에서 보기">${esc(label.length > 46 ? label.slice(0, 44) + '…' : label)}</a>`).join('');
+    const all = ps.length > PROD_SHOW ? ` <a href="?w=${w.week}#products" class="kwlink" data-kw="${esc(t.kw)}" data-week="${w.week}">전체 ${ps.length}개 보기 →</a>` : '';
+    return `<div class="act ai">${AI_TAG}<dl class="actlist">${ls.map(([k, v]) => `<dt>${esc(aiLabel(k))}</dt><dd>${esc(v)}</dd>`).join('')}
+      ${ps.length ? `<dt>참고 제품</dt><dd class="prodlinks">${links}${all}</dd>` : ''}</dl></div>`;
+  }
   function aiBlock(a, situation) {
     if (!a) return '';
     const ls = (situation ? [situation] : []).concat(actionLines(a));
     return `<div class="act ai">${AI_TAG}<dl class="actlist">${ls.map(([k, v]) => `<dt>${esc(k || '')}</dt><dd>${esc(v)}</dd>`).join('')}</dl></div>`;
   }
-  const aiCell = a => `<details class="ai-cell"><summary>${esc(aiLine(a, '검토할 것') || aiLine(a, '의미'))}</summary>${AI_TAG}<dl class="actlist">${actionLines(a).map(([k, v]) => `<dt>${esc(k || '')}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>`;
+  const aiCell = (a, open) => `<details class="ai-cell" ${open ? 'open' : ''}><summary>${esc(aiLine(a, '검토할 것') || aiLine(a, '의미'))}</summary>${AI_TAG}<dl class="actlist">${actionLines(a).map(([k, v]) => `<dt>${esc(aiLabel(k))}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>`;
   // 점유 막대: 막대에는 색만, 브랜드명·건수·비율은 아래 범례에 (작은 칸에서 이름이 잘리지 않게)
   function shareBar(m) {
     if (!m.total) return '<div class="sharebar empty-bar">K-브랜드 언급 없음</div>';
@@ -363,8 +376,7 @@
         <p><b>캡션 언급</b> ${t.mentions.map(m => { const f = chipFail(m); return `<span class="chip out ${f.length ? 'chip-fail' : ''}" ${f.length ? `title="${esc(failTip(f))}" data-track="review_badge_hover"` : ''}>${esc(String(m).toUpperCase())}</span>`; }).join('')}</p>
         <details data-track="evidence_open" data-kw="${esc(t.kw)}" open><summary><b>SNS 근거</b> ${spons ? `<span class="muted small">협찬 ${spons}/${t.evidence.length}</span>` : ''} ${reviewTag(byKind('evidence'), '근거 검토')}</summary>
           ${t.evidence.map(e => `<blockquote class="${isSponsor(e) ? 'sponsor' : ''}">${isSponsor(e) ? tag('협찬', 'spons') + ' ' : ''}“${esc(e)}”</blockquote>`).join('') || '<span class="muted">없음</span>'}</details>
-        ${aiBlock(t.ai, actionLines(t.action).find(([k]) => k === '상황'))}
-        ${actionBlock(t.action)}
+        ${t.ai ? aiTrendBlock(w, t) : actionBlock(t.action)}
       </div></section>`;
   }
   function pageTrends(mode, k) {
@@ -406,6 +418,10 @@
         ${rest.map(x => trendCard(w, x.t, x.i, dup)).join('')}` : ''}`;
     return [html, () => {
       document.querySelectorAll('.stat[data-opp]').forEach(el => el.onclick = () => { oppFilter = oppFilter === el.dataset.opp ? 'ALL' : el.dataset.opp; render(); });
+      document.querySelectorAll('.prodlink').forEach(a => a.onclick = e => { e.preventDefault();
+        prodFocus = a.dataset.pid; prodKw = null; quadFilter = 'ALL'; prodSearch = ''; go({ mode: 'week', key: a.dataset.week, page: 'products' }); });
+      document.querySelectorAll('.kwlink').forEach(a => a.onclick = e => { e.preventDefault();
+        prodKw = a.dataset.kw; prodFocus = null; quadFilter = 'ALL'; prodSearch = ''; go({ mode: 'week', key: a.dataset.week, page: 'products' }); });
       document.querySelectorAll('.tc-toggle').forEach(b => b.onclick = () => { const c = b.closest('.tcard'); c.classList.toggle('open'); b.textContent = c.classList.contains('open') ? '접기 ▲' : '자세히 ▼'; });
       const focus = i => { const el = document.getElementById('t_' + i); if (!el) return; el.classList.add('open', 'flash');
         el.querySelector('.tc-toggle').textContent = '접기 ▲'; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => el.classList.remove('flash'), 1500); };
@@ -505,6 +521,7 @@
   // ── 페이지: 제품 전략 ──
   const QUAD_ORDER = ['PUSH_NOW', 'FIX_AND_PUSH', 'MONITOR', 'HOLD'];
   let quadFilter = 'ALL', prodSearch = '', openGroups = new Set(['PUSH_NOW', 'FIX_AND_PUSH', 'MONITOR']);
+  let prodKw = null, prodFocus = null;   // 트렌드 카드에서 넘어올 때: 키워드로 거르기 / 특정 제품 강조
   function pageProducts(mode, k) {
     const ws = periodWeeks(mode, k), w = ws[ws.length - 1], ps = w.products;
     if (!ps.length) return [snapNote(mode, ws) + empty('제품 인사이트 없음'), null];
@@ -513,17 +530,18 @@
                     FIX_AND_PUSH: '별점 하락 또는 불만 리뷰 증가. 불만 포인트 개선 후 확대',
                     HOLD: '반응은 좋으나 변화 없음. 현 수준 유지·관찰',
                     MONITOR: '긍정 비율 65% 미만, 하락 신호 없음. 관찰 대상' };
-    const match = p => (quadFilter === 'ALL' || p.quad === quadFilter) && (!prodSearch || `${p.name} ${p.brand}`.toLowerCase().includes(prodSearch));
+    const match = p => (quadFilter === 'ALL' || p.quad === quadFilter) && (!prodSearch || `${p.name} ${p.brand}`.toLowerCase().includes(prodSearch))
+      && (!prodKw || (p.kws || []).includes(prodKw));
     const trend = v => v === null || v === undefined ? '<span class="muted">—</span>' : v > 0 ? `▲ ${v.toFixed(2)}` : v < 0 ? `▼ ${v.toFixed(2)}` : '±0';
     const groups = QUAD_ORDER.map(q => { const rows = ps.filter(p => p.quad === q && match(p));
       const acts = new Set(rows.map(p => p.action)); return { q, rows, same: rows.length > 1 && acts.size === 1 && !rows.some(p => p.ai) ? rows[0].action : null }; }).filter(g => g.rows.length);
     const body = groups.map(g => {
-      const open = openGroups.has(g.q) || !!prodSearch;
+      const open = openGroups.has(g.q) || !!prodSearch || !!prodKw || (!!prodFocus && g.rows.some(p => p.pid === prodFocus));
       const head = `<tr class="grp"><td colspan="9"><button class="grp-btn" data-track="product_group_expand" data-group="${g.q}">${open ? '▼' : '▶'}</button>
         <span class="tag quad" ${g.same ? `title="${esc('전략 요약: ' + g.same)}"` : ''}>${esc((META.quad[g.q] || {}).label || g.q)}</span> <span class="muted">${g.rows.length}개${g.same ? ' · 전략 요약 동일 (라벨에 마우스)' : ''}</span></td></tr>`;
-      return head + (open ? g.rows.map(p => `<tr><td><b>${esc(p.name)}</b></td><td>${esc(String(p.brand).toUpperCase())}</td>
+      return head + (open ? g.rows.map(p => `<tr id="pr_${esc(p.pid || '')}" class="${p.pid && p.pid === prodFocus ? 'focus' : ''}"><td><b>${esc(p.name)}</b></td><td>${esc(String(p.brand).toUpperCase())}</td>
         <td class="num">${pct(p.pos)}</td><td class="num">${pct(p.neg)}</td><td class="num">${trend(p.rt)}</td><td class="num">${fmt(p.vel)}</td>
-        <td class="num">${p.oy_orders ?? '—'}</td><td class="num">${p.oy_korea ?? '—'}</td><td class="small">${p.ai ? aiCell(p.ai) : g.same ? '' : `<span class="muted">${esc(p.action.slice(0, 90))}</span>`}</td></tr>`).join('') : '');
+        <td class="num">${p.oy_orders ?? '—'}</td><td class="num">${p.oy_korea ?? '—'}</td><td class="small">${p.ai ? aiCell(p.ai, p.pid === prodFocus) : g.same ? '' : `<span class="muted">${esc(p.action.slice(0, 90))}</span>`}</td></tr>`).join('') : '');
     }).join('');
     const kwRows = ps.filter(p => match(p) && (p.pos_kw.length || p.neg_kw.length || p.needs_kw.length));
     const html = `${snapNote(mode, ws)}
@@ -532,7 +550,8 @@
       ${card('전략 분포 (별점 추세 × VOC 긍정도)', '가로 = 플랫폼 평균 별점의 주간 변화 · 세로 = 리뷰 긍정 비율(0.65 기준선). 별점 추세가 없는 제품은 왼쪽 회색 띠에 따로 모았습니다.',
         '<div style="position:relative;height:320px"><canvas id="quad"></canvas></div>')}
       <section class="card"><div class="toolbar"><h3 style="margin:0 8px 0 0">제품</h3>
-        <input id="psearch" placeholder="제품·브랜드 검색" value="${esc(prodSearch)}">${quadFilter !== 'ALL' ? `<span class="tag">${esc(META.quad[quadFilter].label)} 필터 · 카드를 다시 누르면 해제</span>` : ''}</div>
+        <input id="psearch" placeholder="제품·브랜드 검색" value="${esc(prodSearch)}">${quadFilter !== 'ALL' ? `<span class="tag">${esc(META.quad[quadFilter].label)} 필터 · 카드를 다시 누르면 해제</span>` : ''}
+        ${prodKw ? `<span class="tag ai-tag">'${esc(kwName(prodKw))}' 트렌드의 참고 제품 ${ps.filter(match).length}개 · <a href="#" id="kwclear">해제</a></span>` : ''}</div>
         <div class="tbl-wrap"><table><thead><tr><th>제품</th><th>브랜드</th><th class="num">VOC 긍정</th><th class="num">부정</th><th class="num">별점 추세</th>
           <th class="num">리뷰 유입</th><th class="num">OY 주문</th><th class="num">OY 한국</th><th>전략 요약</th></tr></thead><tbody>${body}</tbody></table></div></section>
       ${card('제품별 VOC 키워드', '리뷰 감성 분석의 긍정·부정·개선 니즈 키워드',
@@ -544,6 +563,9 @@
           </tbody></table></div>` : empty('키워드 없음'))}`;
     return [html, () => {
       document.querySelectorAll('.stat[data-q]').forEach(el => el.onclick = () => { quadFilter = quadFilter === el.dataset.q ? 'ALL' : el.dataset.q; render(); });
+      const kc = document.getElementById('kwclear'); if (kc) kc.onclick = e => { e.preventDefault(); prodKw = null; render(); };
+      if (prodFocus) { const row = document.getElementById('pr_' + prodFocus); prodFocus = null;
+        if (row) setTimeout(() => { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); row.classList.add('flash'); setTimeout(() => row.classList.remove('flash'), 1600); }, 60); }
       document.querySelectorAll('.grp-btn').forEach(b => b.onclick = () => { const g = b.dataset.group; openGroups.has(g) ? openGroups.delete(g) : openGroups.add(g); render(); });
       const inp = document.getElementById('psearch');
       inp.oninput = () => { prodSearch = inp.value.toLowerCase().trim(); render(); const n = document.getElementById('psearch'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };

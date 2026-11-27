@@ -102,6 +102,19 @@ class DashboardBuilder:
                        FROM fact_sns_signals WHERE week=? AND platform_id IN ('tiktok','youtube')
                        GROUP BY keyword) s ON s.keyword = t.keyword
             WHERE t.week=? ORDER BY t.z_score DESC""", week)
+        # 트렌드 ↔ 제품 연결: 키워드별 참고 제품(캡션 직접 언급 우선), 제품별 연결 키워드
+        prods, kws_of = {}, {}
+        for r in q("""SELECT lip.keyword, lip.product_id, lip.match_type, b.brand_name_en, p.product_name_en
+                      FROM fact_llm_insight_products lip
+                      JOIN dim_product p ON p.product_id = lip.product_id JOIN dim_brand b ON b.brand_id = p.brand_id
+                      WHERE lip.week=? ORDER BY lip.keyword, CASE lip.match_type WHEN 'direct' THEN 0 ELSE 1 END, lip.id"""):
+            lst = prods.setdefault(r["keyword"], [])
+            if all(x[0] != r["product_id"] for x in lst):
+                lst.append([r["product_id"], f"{(r['brand_name_en'] or '').upper()} {r['product_name_en'] or ''}".strip(),
+                            r["match_type"] == "direct"])
+            kws_of.setdefault(r["product_id"], [])
+            if r["keyword"] not in kws_of[r["product_id"]]:
+                kws_of[r["product_id"]].append(r["keyword"])
         ev = {}
         for r in q("""SELECT keyword, evidence FROM fact_llm_insight_products
                       WHERE week=? AND evidence IS NOT NULL AND evidence != ''
@@ -152,6 +165,7 @@ class DashboardBuilder:
                 "top_post_share": top_share(r["keyword"]),
                 "eng_z": eng_z.get(r["keyword"]),
                 "ai": r["ai_review"] if "ai_review" in r.keys() else None,
+                "prods": prods.get(r["keyword"], []),
             })
 
         # 브랜드 언급 (알려진 K-브랜드만) — 트렌드 행렬
@@ -201,6 +215,7 @@ class DashboardBuilder:
             "needs_kw": _json(r["needs_keywords"], [])[:5],
             "oy_url": r["oy_url"], "sephora_url": r["sephora_url"],
             "ai": r["ai_review"],
+            "pid": r["product_id"], "kws": kws_of.get(r["product_id"], []),
         } for r in q(f"""
             SELECT pi.*, p.product_name_en, p.oy_url, p.sephora_url, b.brand_name_en,
                    {opt('voc_velocity')}, {opt('rating_trend')}, {opt('ai_review')}

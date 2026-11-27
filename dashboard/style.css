@@ -289,3 +289,11 @@ details.card summary { cursor: pointer; }
 .ai-cell .actlist { display: grid; grid-template-columns: 72px 1fr; gap: 4px 10px; margin: 6px 0 4px; }
 .ai-cell .actlist dt { color: var(--muted); font-weight: 600; }
 .ai-cell .actlist dd { margin: 0; line-height: 1.45; }
+
+/* 트렌드 → 제품 전략 연결 */
+.prodlinks { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.chip.prodlink { text-decoration: none; color: var(--ink); background: #fff; border: 1px solid #d0bfff; }
+.chip.prodlink:hover { background: #efedff; }
+.kwlink { font-size: 12px; color: #5f3dc4; text-decoration: none; }
+tr.focus td { background: #f3f0ff; }
+tr.flash td { transition: background 0.3s; background: #e5dbff; }
