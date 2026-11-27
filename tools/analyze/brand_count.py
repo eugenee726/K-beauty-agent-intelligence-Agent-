@@ -60,5 +60,6 @@ def count_brands(conn: sqlite3.Connection, week: str, keyword: str,
         blob = f"{text or ''} {tags or ''}".lower()
         for b in {bid for p, bid in patterns if p.search(blob)}:
             counts[b] = counts.get(b, 0) + 1
-    top = sorted(counts.items(), key=lambda x: -x[1])
+    # 동점은 brand_id 순 — 위 set 순회 순서가 실행마다 달라 동점 순서(와 화면의 1위)가 바뀌던 문제 방지
+    top = sorted(counts.items(), key=lambda x: (-x[1], x[0]))
     return {"captions": n_cap, "deep": len(deep), "total": sum(counts.values()), "brands": top}
