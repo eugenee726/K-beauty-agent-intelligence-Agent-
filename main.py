@@ -9,7 +9,7 @@ K-Beauty Intelligence Agent v3 — CLI 진입점.
   python main.py analyze                    # 분석만 — 달력 기준 현재 ISO 주차
   python main.py analyze --week 2026-W20  # 분석만 — 지정 주차
   python main.py report            # 리포트만 생성
-  python main.py reshape                    # 저장된 전 주차의 트렌드 모양만 현재 규칙으로 재계산
+  python main.py reshape                    # 저장된 전 주차의 z·트렌드 모양·액션을 현재 규칙으로 재계산 (LLM 없음)
   python main.py reshape --week 2026-W47    # 지정 주차만 (LLM·VOC·리포트는 건드리지 않음)
   python main.py backfill-terms [--dry-run] # 사전에 새로 넣은 용어의 과거 주차 신호를 저장된 원문에서 채움
   python main.py term-coverage --week 2026-W49  # 새 용어 게시물 중 기존 사전 용어가 없는 비율 (과거 하한 영향 확인)
@@ -282,12 +282,12 @@ def main() -> None:
         with sqlite3.connect(orch.db_path) as conn:
             weeks = [analysis_week] if analysis_week else [
                 r[0] for r in conn.execute("SELECT DISTINCT week FROM fact_trend_insights ORDER BY week")]
-        print("\n트렌드 모양 재계산 (바뀐 것만 표시):")
+        print("\n저장된 주차 재계산 — z·모양·액션 (LLM 없음, 바뀐 것만 표시):")
         for wk in weeks:
-            changed = reshape_trends(orch.db_path, wk)
-            print(f"  {wk}: {len(changed)}건 변경")
-            for kw, old, new in changed:
-                print(f"    {kw}: {old} → {new}")
+            res = reshape_trends(orch.db_path, wk)
+            print(f"  {wk}: 모양 {len(res['shape'])}건 · z {len(res['z'])}건 · 액션 {res['actions']}건 변경")
+            for kw, old, new in res["shape"]:
+                print(f"    모양 {kw}: {old} → {new}")
 
     elif args.mode == "backfill-terms":
         from tools.collect.backfill_terms import backfill

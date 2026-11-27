@@ -79,32 +79,146 @@ def classify_trend_shape(is_new_kw, weeks_rising, momentum_score, z_score) -> st
     return "steady"
 
 
-def reshape_trends(db_path: str, week: str) -> list[tuple[str, str, str]]:
+# ── 트렌드 액션 규칙표 (조건 → 행동). 대시보드 방법론 페이지가 meta.action_rules 로 그대로 보여 준다 ──
+# 특정 회사 관점 없이, 같은 조건이면 어느 브랜드에게나 같은 행동을 제안한다.
+# 문장마다 키워드별 근거(점유 수치·소비자 표현·참고 제품·채널)를 붙여 키워드마다 다른 제안이 되게 한다.
+ACTION_RULES = {
+    "timing": {   # trend_shape → (화면 라벨, 언제·무엇을)
+        "spike":     ("이번 주 급등", "1~2주 안에 반응형 숏폼·리뷰 콘텐츠로 대응하고, 광고·재고 확대는 다음 주 지속 여부를 확인한 뒤 결정"),
+        "sustained": ("3주 연속 상승", "상세페이지·검색 키워드·상시 콘텐츠에 반영하고 광고 확대를 검토"),
+        "emerging":  ("신규 등장", "소량 테스트 콘텐츠로 반응을 확인"),
+        "steady":    ("꾸준한 수요", "변화보다 상시 수요이므로 기본 콘텐츠와 상세페이지 키워드를 점검"),
+    },
+    "position": {  # opportunity_type → (조건, 행동)
+        "leader":      ("1위 점유 30% 이상이고 2위의 2배 이상 (우세)",
+                        "1위 브랜드는 점유 유지(리뷰·재구매 메시지), 그 외 브랜드는 1위 대표 제품과 다른 제형·가격·피부 타입으로 차별화"),
+        "contested":   ("우세 조건을 만족하는 브랜드 없음 (각축)",
+                        "니즈를 가장 직접 말하는 메시지가 선점할 여지 — 소비자 표현을 그대로 쓴 콘텐츠"),
+        "white_space": ("캡션에 K-브랜드 언급 없음 (공백)",
+                        "맞는 제품이 있으면 그 제품 보유 브랜드가 이 키워드 메시지로 먼저 말하고, 없으면 신제품·소싱 검토"),
+    },
+}
+_LANG_SKIP = {"kbeauty", "k-beauty", "koreanskincare", "korean skincare", "skincare", "skincareroutine",
+              "skincare routine", "kbeautyskincare", "fyp", "viral", "beauty"}
+
+
+def _consumer_terms(conn, week: str, kw: str, n: int = 3) -> list[str]:
+    """LLM 이 캡션에서 뽑은 소비자 표현(fact_llm_insights.consumer_language) 중 키워드 자체·광의어를 뺀 앞쪽 n개."""
+    r = conn.execute("SELECT consumer_language FROM fact_llm_insights WHERE week=? AND keyword=? "
+                     "ORDER BY id DESC LIMIT 1", (week, kw)).fetchone()
+    out, seen = [], {kw.lower(), kw.replace("_", " ").lower()}
+    for t in (r[0] if r and r[0] else "").split(","):
+        t = t.strip().lstrip("#").strip()
+        k = t.lower()
+        if not t or k in seen or k in _LANG_SKIP or len(t) > 40:
+            continue
+        seen.add(k)
+        out.append(t)
+        if len(out) == n:
+            break
+    return out
+
+
+def _ref_products(conn, week: str, kw: str, n: int = 2) -> list[str]:
+    """LLM 이 연결한 제품 (캡션에서 직접 언급된 제품 우선)."""
+    rows = conn.execute("""
+        SELECT b.brand_name_en, p.product_name_en FROM fact_llm_insight_products lip
+        JOIN dim_product p ON p.product_id = lip.product_id JOIN dim_brand b ON b.brand_id = p.brand_id
+        WHERE lip.week=? AND lip.keyword=?
+        ORDER BY CASE lip.match_type WHEN 'direct' THEN 0 ELSE 1 END, lip.id""", (week, kw)).fetchall()
+    out = []
+    for brand, name in rows:
+        name = (name or "").rstrip("?").strip()
+        name = name if len(name) <= 42 else name[:40].rstrip() + "…"
+        label = f"{(brand or '').upper()} {name}".strip()
+        if label and label not in out:
+            out.append(label)
+        if len(out) == n:
+            break
+    return out
+
+
+def _brand_label(conn, brand_id: str) -> str:
+    r = conn.execute("SELECT brand_name_en FROM dim_brand WHERE brand_id=?", (brand_id,)).fetchone()
+    return ((r[0] if r and r[0] else brand_id) or "").upper()
+
+
+def trend_action_text(conn, week: str, kw: str, shape: str, opp_type: str, shares: list,
+                      lead: str | None, cross: bool) -> str:
     """
-    이미 저장된 주차의 trend_shape 만 현재 규칙으로 다시 계산한다.
-    LLM·VOC·제품 인사이트·리포트는 건드리지 않는다 (판정 규칙 수정 후 과거 주차 정정용).
-    z_score 는 저장값을 쓰고, 신규 등장(emerging)은 저장값을 유지한다.
-    반환: [(keyword, 이전 모양, 새 모양)] — 바뀐 것만
+    규칙표(ACTION_RULES) + 키워드별 근거로 액션 문장을 만든다 (LLM 없음, 결정적).
+    shares: [(brand_id, 점유, 언급 수)] — 대화 점유 판정과 같은 결정적 집계(count_brands).
     """
+    label, when = ACTION_RULES["timing"].get(shape, ACTION_RULES["timing"]["steady"])
+    if opp_type == "leader" and shares:
+        b, s, n = shares[0]
+        B = _brand_label(conn, b)
+        ratio = f", 2위의 {n / shares[1][2]:.1f}배" if len(shares) > 1 else ", 단독 언급"
+        pos = (f"{B} 우세({s:.0%}{ratio}) — {B}는 점유 유지(리뷰·재구매 메시지), "
+               f"그 외 브랜드는 {B} 대표 제품과 다른 제형·가격·피부 타입으로 차별화")
+    elif opp_type == "contested" and shares:
+        top = ", ".join(f"{_brand_label(conn, b)} {s:.0%}" for b, s, _ in shares[:2])
+        pos = f"대표 브랜드 없음({top}) — 니즈를 가장 직접 말하는 메시지가 선점할 여지"
+    elif _ref_products(conn, week, kw, 1):
+        pos = f"대화에 K-브랜드 언급 없음 — 맞는 제품을 가진 브랜드가 '{kw.replace('_', ' ')}' 메시지로 먼저 말할 여지"
+    else:
+        pos = "맞는 K-뷰티 제품 없음 — 신제품·소싱 검토 신호"
+    terms = _consumer_terms(conn, week, kw)
+    channel = ("TikTok·YouTube 동시" if cross else f"{'TikTok' if lead == 'tiktok' else 'YouTube'} 중심") if lead else ""
+    text = f"{label} · {pos}. {when}"
+    if terms:
+        text += f" — 소비자 표현 '{', '.join(terms)}' 활용"
+    if channel:
+        text += f" · 채널: {channel}"
+    text += "."
+    prods = _ref_products(conn, week, kw)
+    if prods:
+        text += f" 참고 제품: {', '.join(prods)}."
+    return text
+
+
+def reshape_trends(db_path: str, week: str) -> dict:
+    """
+    이미 저장된 주차를 현재 규칙으로 다시 계산한다 (LLM·VOC·제품 인사이트·리포트는 건드리지 않음).
+      1) z: StatsTool.compute_sns_anomalies — 품질 기준선으로 그 주 fact_sns_signals.z_score/eng_z 갱신
+         (급상승 브랜드 카드가 이 값을 읽는다)
+      2) fact_trend_insights 의 z_score·momentum_score·trend_shape·action_rec 갱신
+    신규 등장(emerging)은 저장값을 유지한다. 트렌드 목록 구성(어떤 키워드를 LLM 분석했는지)은 바뀌지 않는다.
+    반환: {"shape": [(keyword, 이전, 새)], "z": [(keyword, 이전, 새)], "actions": 갱신 수}
+    """
+    from tools.analyze.brand_count import brand_patterns, count_brands
+    anomalies = StatsTool(db_path).compute_sns_anomalies(week)
+    z_map = ({r["keyword"].lower(): float(r["z_score"]) for _, r in anomalies.iterrows()}
+             if not anomalies.empty else {})
     mom = MomentumTool(db_path).compute_momentum(week)
     mom_map = ({r["keyword"].lower(): r for _, r in mom.iterrows()} if not mom.empty else {})
-    changed = []
+    out = {"shape": [], "z": [], "actions": 0}
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute("SELECT id, keyword, z_score, trend_shape FROM fact_trend_insights WHERE week=?",
+        patterns = brand_patterns(conn)
+        rows = conn.execute("""SELECT id, keyword, z_score, momentum_score, trend_shape, opportunity_type, lead_platform,
+                                      is_cross_platform, action_rec FROM fact_trend_insights WHERE week=?""",
                             (week,)).fetchall()
         for r in rows:
-            m = mom_map.get(r["keyword"].lower())
-            new = classify_trend_shape(
-                r["trend_shape"] == "emerging",
-                int(m["weeks_rising"]) if m is not None else 0,
-                float(m["momentum_score"]) if m is not None else 0.0,
-                float(r["z_score"] or 0.0),
-            )
-            if new != r["trend_shape"]:
-                conn.execute("UPDATE fact_trend_insights SET trend_shape=? WHERE id=?", (new, r["id"]))
-                changed.append((r["keyword"], r["trend_shape"], new))
-    return changed
+            kw = r["keyword"]
+            m = mom_map.get(kw.lower())
+            z = round(z_map.get(kw.lower(), float(r["z_score"] or 0.0)), 2)
+            mom_score = round(float(m["momentum_score"]), 2) if m is not None else float(r["momentum_score"] or 0.0)
+            shape = classify_trend_shape(r["trend_shape"] == "emerging",
+                                         int(m["weeks_rising"]) if m is not None else 0, mom_score, z)
+            det = count_brands(conn, week, kw, patterns)
+            shares = [(b, n / det["total"], n) for b, n in det["brands"]] if det["total"] else []
+            action = trend_action_text(conn, week, kw, shape, r["opportunity_type"], shares,
+                                       r["lead_platform"], bool(r["is_cross_platform"]))
+            if shape != r["trend_shape"]:
+                out["shape"].append((kw, r["trend_shape"], shape))
+            if z != round(float(r["z_score"] or 0.0), 2):
+                out["z"].append((kw, r["z_score"], z))
+            if action != r["action_rec"]:
+                out["actions"] += 1
+            conn.execute("""UPDATE fact_trend_insights SET z_score=?, momentum_score=?, trend_shape=?, action_rec=?
+                            WHERE id=?""", (z, mom_score, shape, action, r["id"]))
+    return out
 
 
 class DecisionAgent:
@@ -242,7 +356,9 @@ class DecisionAgent:
             competitors = mentions  # 아래 저장 함수와의 호환용 이름
 
             insight_summary = self._trend_insight_text(kw, opp_type, shares, brand_ids)
-            action_rec = self._trend_action_text(kw, opp_type, shares, brand_ids, insight, mom_row)
+            with self._conn() as conn:
+                action_rec = trend_action_text(conn, self.week, kw, trend_shape, opp_type, shares,
+                                               mom_row.get("lead_platform"), bool(mom_row.get("is_cross_platform", 0)))
 
             try:
                 with self._conn() as conn:
@@ -300,7 +416,7 @@ class DecisionAgent:
 
     # 기회 유형별 의미 (마케터 관점)
     #   leader      : 한 브랜드가 이 니즈의 대화를 차지 → 주인공이면 강화, 아니면 벤치마크·차별화
-    #   contested   : 주인 없는 각축 → 먼저 "이 니즈 = 우리 브랜드"를 만드는 쪽이 유리 (콘텐츠·시딩)
+    #   contested   : 주인 없는 각축 → 니즈를 가장 직접 말하는 메시지가 선점 (액션은 ACTION_RULES)
     #   white_space : 대화에 K-뷰티 브랜드 없음
     #       ↳ 소통 공백: 맞는 K-뷰티 제품은 있음(연결 제품 존재) → 메시지·콘텐츠로 빠르게 공략
     #       ↳ 제품 공백: 맞는 제품 없음 → 신제품·소싱 검토
@@ -317,25 +433,6 @@ class DecisionAgent:
                     f"({', '.join(x.upper() for x in brand_ids[:4])}).")
         else:
             return "제품 공백 — 대화에 K-뷰티 브랜드도, 맞는 제품도 없음."
-
-    def _trend_action_text(self, kw, opp_type, shares, brand_ids, insight, mom_row) -> str:
-        lead = mom_row.get("lead_platform") or "TikTok"
-        opp  = insight.get("opportunity", "")
-        if opp_type == "leader":
-            b = shares[0][0].upper()
-            return (f"{b}: 효과가 확인된 트렌드 → 광고·재고 강화. "
-                    f"그 외 브랜드: {b}의 대표 제품과 {lead} 콘텐츠를 벤치마크하고, 정면 승부 대신 "
-                    "제형·가격·피부 타입으로 차별화.")
-        elif opp_type == "contested":
-            return (f"아직 주인이 없음 → '{kw}' = 우리 브랜드를 먼저 각인시키는 쪽이 유리. "
-                    "크리에이터 시딩·콘텐츠 집중, VOC·랭킹으로 우위 근거 확보.")
-        elif brand_ids:
-            return (f"맞는 제품을 가진 브랜드({', '.join(x.upper() for x in brand_ids[:3])})는 "
-                    f"'{kw}' 메시지로 콘텐츠·상세페이지를 재정비 — 빠르고 저비용 공략."
-                    + (f" 기회: {opp}." if opp else ""))
-        else:
-            return (f"'{kw}' 니즈에 맞는 K-뷰티 제품이 없음 → 신제품·소싱 검토 신호."
-                    + (f" 기회: {opp}." if opp else ""))
 
     # ─────────────────────────────────────────────────────────
     # Step 2. ProductInsightBuilder

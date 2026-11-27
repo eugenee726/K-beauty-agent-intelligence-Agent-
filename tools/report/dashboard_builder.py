@@ -22,6 +22,7 @@ from pathlib import Path
 
 from tools.analyze.brand_count import BRAND_STOPWORDS, brand_patterns, count_brands
 from tools.collect.sns_terms import approved_terms, dictionary_post_counts
+from agents.decision_agent import ACTION_RULES
 from tools.report.html_report_tool import OPP_META, QUAD_META, SHAPE_META, HTMLReportTool
 
 logger = logging.getLogger(__name__)
@@ -274,7 +275,7 @@ class DashboardBuilder:
                 "timeline": self._timeline(conn),
                 "brand_names": names,
                 "brand_company": {k: v for k, v in company.items() if v},
-                "meta": {"opp": OPP_META, "quad": QUAD_META, "shape": SHAPE_META, "added_terms": approved_terms(self.db_path),
+                "meta": {"opp": OPP_META, "quad": QUAD_META, "shape": SHAPE_META, "added_terms": approved_terms(self.db_path), "action_rules": ACTION_RULES,
                          "term_candidates": self._term_candidates(conn)},
                 "brand_stopwords": sorted(BRAND_STOPWORDS),
             }

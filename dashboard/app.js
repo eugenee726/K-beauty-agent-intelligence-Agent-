@@ -191,7 +191,7 @@
              ruleRate: tot(v.rule) ? v.rule.pass / tot(v.rule) : null, llmRate: tot(v.llm) ? v.llm.pass / tot(v.llm) : null };
   }
   // 트렌드 = 파이프라인 판정이 급등(spike) 또는 지속 상승(sustained)인 키워드.
-  // 그 외(완만·정체)는 후보가 없는 주에 게시물 순으로 대신 분석한 '주요 키워드(트렌드 아님)'로 따로 보여 준다.
+  // 그 외(완만·정체)는 후보가 없는 주에 게시물 순으로 대신 분석한 '주요 키워드'로 따로 보여 준다.
   const isTrend = t => t.shape === 'spike' || t.shape === 'sustained';
   // 기간 안 트렌드(월간은 키워드별 마지막 등장 주차 값)
   function periodTrends(ws, pick = isTrend) {
@@ -201,6 +201,19 @@
     return Object.values(m).sort((a, b) => b.t.z - a.t.z);
   }
 
+  // 액션 규칙표: 파이프라인(decision_agent.ACTION_RULES)이 문장을 만드는 규칙을 그대로 보여 준다
+  function actionRulesCard() {
+    const r = META.action_rules; if (!r) return '';
+    const shapeName = { spike: '급등', sustained: '지속 상승', emerging: '신규 등장', steady: '주요 키워드(정체)' };
+    const posName = { leader: '우세', contested: '각축', white_space: '공백' };
+    return card('액션 규칙표', '각 트렌드·주요 키워드의 제안 문장 = 시점 규칙 + 구도 규칙 + 키워드별 근거(점유 수치, 소비자 표현, 채널, 참고 제품). 특정 회사 관점 없이 같은 조건이면 같은 행동을 제안합니다.',
+      `<div class="grid2 inner">
+         <div><table><thead><tr><th>모양</th><th>언제·무엇을</th></tr></thead><tbody>
+           ${Object.entries(r.timing).map(([k, v]) => `<tr><td style="white-space:nowrap"><b>${esc(shapeName[k] || k)}</b></td><td>${esc(v[1])}</td></tr>`).join('')}</tbody></table></div>
+         <div><table><thead><tr><th>구도</th><th>조건</th><th>행동</th></tr></thead><tbody>
+           ${Object.entries(r.position).map(([k, v]) => `<tr><td style="white-space:nowrap"><b>${esc(posName[k] || k)}</b></td><td>${esc(v[0])}</td><td>${esc(v[1])}</td></tr>`).join('')}</tbody></table></div>
+       </div>`);
+  }
   // 키워드 사전 관리: 사람이 승인한 추가 용어 + 이번 주 사전 밖 용어 후보 (승인은 서버 CLI)
   function termCard() {
     const added = Object.entries(META.added_terms || {}), cand = META.term_candidates || {};
@@ -213,7 +226,7 @@
        </tbody></table></div>` : '<p class="muted">후보 없음 (주간 실행 때 갱신)</p>'}`);
   }
   // 월간 표 아래: 트렌드가 아닌 주요 키워드 한 줄
-  const otherNote = ts => ts.length ? `<div class="other-note" style="margin-top:8px">주요 키워드(트렌드 아님): ${ts.map(t => esc(kwName(t.kw))).join(', ')}</div>` : '';
+  const otherNote = ts => ts.length ? `<div class="other-note" style="margin-top:8px">주요 키워드: ${ts.map(t => esc(kwName(t.kw))).join(', ')}</div>` : '';
   // ── 공통 조각 ──
   const card = (title, hint, body, extra = '') => `<section class="card" ${extra}><h3>${title}</h3>${hint ? `<div class="hint">${hint}</div>` : ''}${body}</section>`;
   const empty = msg => `<div class="empty">${msg}</div>`;
@@ -262,7 +275,7 @@
           watch.length ? watch.map(x => `<a class="chip watch-chip ${x.tr.state}" href="?${mode === 'week' ? 'w' : 'm'}=${k}#trends" data-kw="${esc(x.t.kw)}" title="${esc(x.tr.reasons.join('\n'))}">
             ${esc(kwName(x.t.kw))} <small>${TRUST[x.tr.state].label}</small></a>`).join('') : empty('없음'))}
       </div>
-      ${others.length ? card(`주요 키워드 (트렌드 아님) ${others.length}`, '트렌드 기준(급등·지속 상승)은 넘지 못했지만 게시물이 많아 니즈를 분석한 키워드. 참고용이며 위 판단에는 넣지 않습니다.',
+      ${others.length ? card(`주요 키워드 ${others.length}`, '트렌드 기준(급등·지속 상승)은 넘지 못했지만 게시물이 많아 니즈를 분석한 키워드. 참고용이며 위 판단에는 넣지 않습니다.',
         others.map(kwChip).join(' ')) : ''}
       <div class="kpis">
         <div class="kpi"><div class="label">급등 <span class="muted small">z ≥ ${RULES.SURGE_Z.v}</span></div><div class="val">${surge}</div>
@@ -366,7 +379,7 @@
         (shown.length ? `<div style="position:relative;height:340px"><canvas id="radar"></canvas></div><ol class="radar-legend">${shown.map(x =>
           `<li data-i="${x.i}"><b>${x.i + 1}</b> ${esc(kwName(x.t.kw))} <span class="muted">z ${zf(x.t.z)} · ${momf(x.t.mom)}</span></li>`).join('')}</ol>` : empty(items.length ? '이 유형에 해당하는 트렌드 없음' : '트렌드 없음')))}
       ${shown.map(x => trendCard(w, x.t, x.i, dup)).join('')}
-      ${rest.length ? `<h3 class="section-sub">주요 키워드 (트렌드 아님) ${rest.length}</h3>
+      ${rest.length ? `<h3 class="section-sub">주요 키워드 ${rest.length}</h3>
         <div class="hint">급등·지속 상승 기준을 넘지 못했지만 게시물이 많아 니즈를 분석한 키워드입니다. 참고용입니다.</div>
         ${rest.map(x => trendCard(w, x.t, x.i, dup)).join('')}` : ''}`;
     return [html, () => {
@@ -577,7 +590,7 @@
       <div class="kpis">
         <div class="kpi"><div class="label">분석한 SNS 게시물</div><div class="val">${fmt(sum(Object.values(plat)))}</div><div class="delta">TikTok ${fmt(plat.tiktok || 0)} · YouTube ${fmt(plat.youtube || 0)}</div></div>
         <div class="kpi"><div class="label">랭킹 제품</div><div class="val">${fmt(last.kpi.ranked)}</div><div class="delta">브랜드 ${fmt(last.kpi.ranked_brands)}개 · ${last.week}</div></div>
-        <div class="kpi"><div class="label">트렌드 후보 → 선정</div><div class="val">${sum(ws.map(w => w.trends.filter(isTrend).length))}</div><div class="delta">z 급등 ∪ 지속 상승, 최대 10개/주 · 주요 키워드(트렌드 아님) ${sum(ws.map(w => w.trends.filter(t => !isTrend(t)).length))}</div></div>
+        <div class="kpi"><div class="label">트렌드 후보 → 선정</div><div class="val">${sum(ws.map(w => w.trends.filter(isTrend).length))}</div><div class="delta">z 급등 ∪ 지속 상승, 최대 10개/주 · 주요 키워드 ${sum(ws.map(w => w.trends.filter(t => !isTrend(t)).length))}</div></div>
         <div class="kpi"><div class="label">제품 인사이트</div><div class="val">${fmt(last.products.length)}</div><div class="delta">${last.week} 기준</div></div>
       </div>
       <div class="grid2">
@@ -637,8 +650,10 @@
            </div>`)}
         ${card('탐지 지표: 총량에서 비중으로', '총량 기준은 수집량이 늘어난 주에 키워드가 한꺼번에 급등으로 잡힘. 비중 기준으로 바꾸고 전 주차 재분석',
           `<div style="position:relative;height:190px"><canvas id="m_norm"></canvas></div>
-           <div class="formula"><span><b>비중</b> = 키워드 게시물 ÷ 그 주 전체 게시물</span><span><b>z</b> = (이번 주 비중 − 과거 평균) ÷ 표준편차</span></div>`)}
+           <div class="formula"><span><b>비중</b> = 키워드 게시물 ÷ 그 주 사전 용어가 있는 게시물</span><span><b>z</b> = (이번 주 비중 − 과거 평균) ÷ 표준편차</span></div>`)}
       </div>
+
+      ${actionRulesCard()}
 
       ${card('트렌드 판정', '두 조건 중 하나만 충족해도 후보 · 광의어·브랜드명 제외 · 게시물 5건 이상 · 최대 10개',
         `<div class="grid2 inner">
