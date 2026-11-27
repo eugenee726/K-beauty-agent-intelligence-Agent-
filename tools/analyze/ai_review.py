@@ -168,6 +168,8 @@ def _known(n: str, known: set[str]) -> bool:
         digits = len(n.split(".")[1]) if "." in n else 0
         if round(kv, digits) == v:
             return True
+        if 0 <= kv <= 1 and round(kv * 100, digits) == v:   # 비율을 퍼센트로 (0.55 → 55)
+            return True
     return False
 
 
