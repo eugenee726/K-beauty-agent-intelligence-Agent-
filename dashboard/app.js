@@ -299,8 +299,8 @@
       const tl = D.timeline, sel = new Set(ws.map(w => w.week));
       chart(document.getElementById('tlChart'), {
         data: { labels: tl.map(t => t.week.slice(5)), datasets: [
-          { type: 'bar', label: '게시물', data: tl.map(t => t.posts), backgroundColor: tl.map(t => sel.has(t.week) ? ACCENT : LIGHT), yAxisID: 'y', borderRadius: 4 },
-          { type: 'line', label: 'engagement', data: tl.map(t => t.eng), borderColor: DARK, borderWidth: 2, pointRadius: 2, tension: .3, yAxisID: 'y2' }] },
+          { type: 'bar', label: '게시물', data: tl.map(t => t.posts), backgroundColor: tl.map(t => sel.has(t.week) ? ACCENT : LIGHT), yAxisID: 'y', borderRadius: 4, order: 1 },
+          { type: 'line', label: 'engagement', data: tl.map(t => t.eng), borderColor: DARK, borderWidth: 2, pointRadius: 3, pointHoverRadius: 6, tension: .3, yAxisID: 'y2', order: 0 }] },  // order 작을수록 위: 선을 막대 앞에
         options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12 } },
           tooltip: { callbacks: { label: c => c.dataset.label === 'engagement' ? `engagement ${engf(c.raw)}` : `게시물 ${fmt(c.raw)}` } } },
           scales: { y: { beginAtZero: true }, y2: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { callback: v => engf(v) } } } },
