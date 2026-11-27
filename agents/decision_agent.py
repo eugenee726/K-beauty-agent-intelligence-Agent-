@@ -513,10 +513,12 @@ class DecisionAgent:
             if not raw_rows:
                 continue
             reviews    = [r["review_text"] for r in raw_rows]
-            avg_rating = round(
-                sum(float(r["rating"] or 3.0) for r in raw_rows) / len(raw_rows), 2
-            )
             pstat = platform_stats.get((t["platform"], t["product_id"]), {})
+            # 별점이 있는 리뷰만 평균. 하나도 없으면 상품 페이지의 전체 평균 별점(실측)을 쓴다.
+            # (예전에는 빈 별점을 3.0 으로 채워, OY 개별 별점이 저장되지 않던 W47 이전에 평균이 전부 3.0 이 됐다)
+            rated = [float(r["rating"]) for r in raw_rows if r["rating"] is not None]
+            avg_rating = (round(sum(rated) / len(rated), 2) if rated
+                          else pstat.get("platform_avg_rating"))
             ok = voc_tool.analyze_and_store(
                 platform_id=t["platform"],
                 product_id=t["product_id"],

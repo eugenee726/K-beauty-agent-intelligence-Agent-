@@ -69,6 +69,7 @@ OPP = {"leader": "우세", "contested": "각축", "white_space": "공백"}
 
 _FORBIDDEN = ("우리", "자사", "당사")
 _NUM = re.compile(r"\d+(?:[.,]\d+)?")
+_WEEK = re.compile(r"(?:\d{4}-)?W\d{1,2}(?!\d)", re.IGNORECASE)   # \b 는 '49에'처럼 한글이 붙으면 안 맞음
 _QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"|“[^”]*”|‘[^’]*’")
 
 
@@ -187,7 +188,8 @@ def check(out: dict, prompt: str, patterns) -> list[str]:
                 issues.append(f"{key}: 금지어 '{w}'")
         if _hangul_ratio(_QUOTED.sub(" ", text)) < 0.4:
             issues.append(f"{key}: 한국어 비율 낮음")
-        extra = [n for n in _NUM.findall(text) if not _known(n, known_nums)]
+        # 주차 표기(W49, 2026-W49)는 숫자 검사에서 뺀다 — '다음 주(W49)'처럼 쓰는 것은 지어낸 수치가 아니다
+        extra = [n for n in _NUM.findall(_WEEK.sub(" ", text)) if not _known(n, known_nums)]
         if extra:
             issues.append(f"{key}: 근거에 없는 숫자 {extra}")
         brands = {bid for p, bid in patterns if p.search(text.lower())} - prompt_brands
