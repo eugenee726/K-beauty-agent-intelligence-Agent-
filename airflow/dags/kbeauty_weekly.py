@@ -6,7 +6,7 @@ kbeauty_weekly — 주간 파이프라인 (매주 목요일 18:30 KST)
 09:00 에 돌리면 수요일 17:30 일간 수집과 같은 할당 하루를 나눠 써서 한도를 넘을 수 있다.
 
 check_status ─> [collect_tiktok | collect_youtube | collect_oy_global]
-             ─> data_quality_check ─> analyze ─> decide ─> validate_insights ─> publish_report
+             ─> data_quality_check ─> analyze ─> decide ─> validate_insights ─> [publish_report | backup]
 
 - 이미 끝난 단계는 건너뛴다 (주차별 테이블에 데이터가 있으면 완료로 본다).
 - 수집은 현재 주차일 때만 실행한다. 과거 주차를 backfill 하면 analyze/decide 만 다시 돈다.
@@ -21,7 +21,7 @@ from airflow.exceptions import AirflowSkipException
 from airflow.operators.python import get_current_context
 
 from kbeauty_common import (
-    DEFAULT_ARGS, bootstrap, is_current_week, mark_stale_runs_failed,
+    DEFAULT_ARGS, backup_db, bootstrap, is_current_week, mark_stale_runs_failed,
     orchestrator, week_for_run,
 )
 
@@ -176,6 +176,11 @@ def kbeauty_weekly():
         )
         return f"s3://{bucket}/{key}"
 
+    @task(trigger_rule="none_failed", retries=0)
+    def backup(status: dict) -> str:
+        """앞 단계가 실패 없이 끝난 주만 DB 사본을 남긴다 (망가진 데이터가 좋은 사본을 밀어내지 않게)."""
+        return str(backup_db(status["week"]))
+
     status = check_status()
     collected = [collect_tiktok(status), collect_youtube(status), collect_oy_global(status)]
     dq = data_quality_check(status)
@@ -188,6 +193,7 @@ def kbeauty_weekly():
     decided >> validated
     published = publish_report(decided)
     validated >> published
+    validated >> backup(status)
 
 
 kbeauty_weekly()

@@ -16,7 +16,7 @@ import pendulum
 from airflow.decorators import dag, task
 from airflow.operators.python import get_current_context
 
-from kbeauty_common import DEFAULT_ARGS, bootstrap
+from kbeauty_common import DEFAULT_ARGS, bootstrap, mark_stale_runs_failed
 
 
 @dag(
@@ -25,7 +25,7 @@ from kbeauty_common import DEFAULT_ARGS, bootstrap
     start_date=pendulum.datetime(2026, 11, 22, tz="Asia/Seoul"),
     catchup=False,
     max_active_runs=1,
-    default_args=DEFAULT_ARGS,
+    default_args={**DEFAULT_ARGS, "on_failure_callback": mark_stale_runs_failed},
     tags=["kbeauty"],
     doc_md=__doc__,
 )

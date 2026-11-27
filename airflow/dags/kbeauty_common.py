@@ -92,20 +92,71 @@ def mark_stale_runs_failed(context) -> None:
     notify_failure(context)
 
 
+BACKUP_KEEP = 4  # 주간 DB 사본 보관 개수
+
+
+def backup_db(week: str, keep: int = BACKUP_KEEP) -> Path:
+    """
+    주간 실행이 성공한 뒤 DB 를 db/backup/kbeauty_<week>.db 로 복사하고 최근 keep 개만 남긴다.
+    sqlite3 backup API 를 써서 WAL 내용까지 일관된 사본을 만든다(파일 복사는 쓰는 중이면 깨질 수 있음).
+    같은 디스크 사본이라 데이터 실수 복구용이고, 서버 고장 대비는 Lightsail 스냅샷이 맡는다.
+    """
+    db = KBEAUTY_HOME / "db" / "kbeauty.db"
+    out_dir = KBEAUTY_HOME / "db" / "backup"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"kbeauty_{week}.db"
+    tmp = out.with_suffix(".db.tmp")
+    # sqlite3 연결의 with 는 commit 만 하고 닫지 않으므로 closing 으로 닫는다 (안 닫으면 파일이 잠김)
+    from contextlib import closing
+    with closing(sqlite3.connect(str(db), timeout=30)) as src, closing(sqlite3.connect(str(tmp))) as dst:
+        src.backup(dst)
+        ok = dst.execute("PRAGMA integrity_check").fetchone()[0]
+    if ok != "ok":
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"백업 무결성 검사 실패: {ok}")
+    tmp.replace(out)
+    # 수동 사본(다른 이름)은 건드리지 않고, 주차 이름 사본만 회전
+    weekly = sorted(out_dir.glob("kbeauty_[0-9][0-9][0-9][0-9]-W[0-9][0-9].db"))
+    for old in weekly[:-keep]:
+        old.unlink()
+    return out
+
+
 def notify_failure(context) -> None:
-    """SLACK_WEBHOOK_URL 이 .env 에 있으면 실패 알림을 보낸다 (없으면 로그만)."""
-    url = os.environ.get("SLACK_WEBHOOK_URL")
+    """
+    재시도까지 모두 실패한 task 를 알린다. .env 설정에 따라
+    - ALERT_EMAIL_TO + SMTP_USER + SMTP_PASSWORD: 이메일 (Gmail 앱 비밀번호, 알림 전용 계정 권장)
+    - SLACK_WEBHOOK_URL: Slack
+    둘 다 없으면 로그만 남긴다. 알림 실패가 원래 에러를 가리지 않도록 예외는 삼킨다.
+    """
     ti = context.get("task_instance")
     text = (
-        f":x: K-Beauty DAG 실패 — {ti.dag_id}.{ti.task_id} "
+        f"K-Beauty DAG 실패 — {ti.dag_id}.{ti.task_id} "
         f"(try {ti.try_number}) {context.get('exception')}"
-        if ti else ":x: K-Beauty DAG 실패"
+        if ti else "K-Beauty DAG 실패"
     )
-    if not url:
-        log.error(text)
-        return
-    try:
-        import requests
-        requests.post(url, json={"text": text[:3000]}, timeout=10)
-    except Exception as e:
-        log.error(f"Slack 알림 실패: {e}")
+    log.error(text)
+
+    to, user, pw = (os.environ.get(k) for k in ("ALERT_EMAIL_TO", "SMTP_USER", "SMTP_PASSWORD"))
+    if to and user and pw:
+        try:
+            import smtplib
+            from email.message import EmailMessage
+            msg = EmailMessage()
+            msg["Subject"] = f"[K-Beauty] {ti.dag_id}.{ti.task_id} 실패" if ti else "[K-Beauty] DAG 실패"
+            msg["From"], msg["To"] = user, to
+            log_url = getattr(ti, "log_url", "") if ti else ""
+            msg.set_content(f"{text[:3000]}\n\n로그: {log_url}\n(서버에서 ssh 터널 후 열기)")
+            with smtplib.SMTP_SSL(os.environ.get("SMTP_HOST", "smtp.gmail.com"), 465, timeout=15) as s:
+                s.login(user, pw)
+                s.send_message(msg)
+        except Exception as e:
+            log.error(f"이메일 알림 실패: {e}")
+
+    url = os.environ.get("SLACK_WEBHOOK_URL")
+    if url:
+        try:
+            import requests
+            requests.post(url, json={"text": f":x: {text[:3000]}"}, timeout=10)
+        except Exception as e:
+            log.error(f"Slack 알림 실패: {e}")
