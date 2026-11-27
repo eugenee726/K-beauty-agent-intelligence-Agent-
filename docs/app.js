@@ -236,11 +236,14 @@
   const reviewTag = (fs, label) => fs.length ? tag(`${label || '검토 필요'} ${fs.length}`, 'review', failTip(fs), 'data-track="review_badge_hover"') : '';
   const snapNote = (mode, ws) => mode === 'month' ? `<div class="hint">월간 보기: 이 화면은 월의 마지막 데이터 주차(${ws[ws.length - 1].week}) 기준입니다.</div>` : '';
 
+  // 점유 막대: 막대에는 색만, 브랜드명·건수·비율은 아래 범례에 (작은 칸에서 이름이 잘리지 않게)
   function shareBar(m) {
     if (!m.total) return '<div class="sharebar empty-bar">K-브랜드 언급 없음</div>';
     const top = m.rows.slice(0, 3), rest = m.total - sum(top.map(r => r[1]));
-    const seg = (label, n, i) => `<span class="seg-${i}" style="flex:${n}" title="${esc(label)} ${n}건 (${pct(n / m.total)})">${esc(label)} ${n}</span>`;
-    return `<div class="sharebar">${top.map((r, i) => seg(brandName(r[0]), r[1], i)).join('')}${rest > 0 ? seg('기타', rest, 3) : ''}</div>`;
+    const items = top.map((r, i) => [brandName(r[0]), r[1], i]).concat(rest > 0 ? [['기타', rest, 3]] : []);
+    const tip = (label, n) => `${esc(label)} ${n}건 (${pct(n / m.total)})`;
+    return `<div class="sharewrap"><div class="sharebar">${items.map(([l, n, i]) => `<span class="seg-${i}" style="flex:${n}" title="${tip(l, n)}"></span>`).join('')}</div>
+      <div class="sharelegend">${items.map(([l, n, i]) => `<span title="${tip(l, n)}"><i class="sw seg-${i}"></i>${esc(l)} <b>${n}</b> <span class="muted">${pct(n / m.total)}</span></span>`).join('')}</div></div>`;
   }
 
   // ── 페이지: 개요 ──

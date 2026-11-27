@@ -265,3 +265,10 @@ details.card summary { cursor: pointer; }
 .section-sub { font-size: 15px; font-weight: 700; margin: 28px 0 4px; }
 .section-sub + .hint, .other-note { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 0 0 12px; }
 .empty .why { margin: 6px 0 6px 18px; color: var(--ink-2); }
+
+/* 점유 막대 + 범례 (브랜드명은 막대 밖에) */
+.sharewrap { display: flex; flex-direction: column; gap: 4px; }
+.sharewrap .sharebar { height: 10px; }
+.sharelegend { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; color: var(--ink-2); }
+.sharelegend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.sw.seg-0 { background: #343a40; } .sw.seg-1 { background: #6c757d; } .sw.seg-2 { background: #adb5bd; } .sw.seg-3 { background: #dee2e6; }
