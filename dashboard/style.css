@@ -278,3 +278,14 @@ details.card summary { cursor: pointer; }
 .tcard .actlist dt { color: var(--muted); font-weight: 600; }
 .tcard .actlist dd { margin: 0; color: var(--ink); line-height: 1.5; }
 @media (max-width: 640px) { .tcard .actlist { grid-template-columns: 1fr; gap: 2px; } .tcard .actlist dd { margin-bottom: 6px; } }
+
+/* AI 해석 (참고용) */
+.tcard .act.ai { background: #f3f0ff; }
+.tag.ai-tag { background: #efedff; color: #5f3dc4; border: none; font-size: 11px; }
+.ai-cell summary { cursor: pointer; color: var(--ink); list-style: none; }
+.ai-cell summary::-webkit-details-marker { display: none; }
+.ai-cell summary::after { content: " ▾"; color: var(--muted); }
+.ai-cell[open] summary::after { content: " ▴"; }
+.ai-cell .actlist { display: grid; grid-template-columns: 72px 1fr; gap: 4px 10px; margin: 6px 0 4px; }
+.ai-cell .actlist dt { color: var(--muted); font-weight: 600; }
+.ai-cell .actlist dd { margin: 0; line-height: 1.45; }

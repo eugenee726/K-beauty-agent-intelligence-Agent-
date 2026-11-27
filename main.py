@@ -13,6 +13,7 @@ K-Beauty Intelligence Agent v3 — CLI 진입점.
   python main.py reshape --week 2026-W47    # 지정 주차만 (LLM·VOC·리포트는 건드리지 않음)
   python main.py backfill-terms [--dry-run] # 사전에 새로 넣은 용어의 과거 주차 신호를 저장된 원문에서 채움
   python main.py term-coverage --week 2026-W49  # 새 용어 게시물 중 기존 사전 용어가 없는 비율 (과거 하한 영향 확인)
+  python main.py ai-review --week 2026-W48 [--force]  # 트렌드·제품 AI 해석(마케터 역할 LLM, 참고용) 생성
   python main.py term candidates [--week W]  # 사전 밖 용어 후보 (기본: 원문이 있는 마지막 주차)
   python main.py term approve pdrn collagen --category 성분 --note "근거"  # 사전에 추가 + 과거 주차 재집계
   python main.py term reject glow makeup     # 후보에서 다시 보이지 않게
@@ -157,7 +158,7 @@ def main() -> None:
     )
     parser.add_argument(
         "mode",
-        choices = ["full", "collect", "analyze", "decide", "report", "reshape", "backfill-terms", "term-coverage", "term", "build-catalog"],
+        choices = ["full", "collect", "analyze", "decide", "report", "reshape", "backfill-terms", "term-coverage", "term", "ai-review", "build-catalog"],
         help    = "실행 모드",
     )
     parser.add_argument(
@@ -194,6 +195,12 @@ def main() -> None:
         help    = "Sephora Playwright 성분 스크랩 비활성화 (build-catalog 한정)",
     )
     parser.add_argument(
+        "--force",
+        action  = "store_true",
+        default = False,
+        help    = "ai-review 한정: 이미 있는 AI 해석도 다시 생성",
+    )
+    parser.add_argument(
         "--dry-run",
         action  = "store_true",
         default = False,
@@ -217,7 +224,7 @@ def main() -> None:
     logger = logging.getLogger("main")
     logger.info(f"실행 모드: {args.mode}")
 
-    if args.week is not None and args.mode not in ("analyze", "decide", "reshape", "term-coverage", "term"):
+    if args.week is not None and args.mode not in ("analyze", "decide", "reshape", "term-coverage", "term", "ai-review"):
         parser.error("--week 는 analyze / decide / reshape / term-coverage / term 모드에서만 사용할 수 있습니다.")
     if args.terms and args.mode != "term":
         parser.error(f"알 수 없는 인자: {' '.join(args.terms)}")
@@ -301,6 +308,17 @@ def main() -> None:
         print(f"\n{analysis_week} 새 용어 게시물 중 기존 사전 용어가 없는 게시물 (추가 전 규칙이면 저장 안 됐을 것):")
         for k, (n, only) in sorted(coverage(orch.db_path, analysis_week).items(), key=lambda x: -x[1][0]):
             print(f"  {k:14s} {only:4d} / {n:4d}" + (f"  ({only / n:.0%})" if n else ""))
+
+    elif args.mode == "ai-review":
+        import sqlite3
+        from tools.analyze.ai_review import AIReviewWriter
+        if analysis_week is None:
+            with sqlite3.connect(orch.db_path) as conn:
+                analysis_week = conn.execute("SELECT MAX(week) FROM fact_trend_insights").fetchone()[0]
+        st = AIReviewWriter(orch.db_path).run(analysis_week, force=args.force)
+        print(f"\nAI 해석 {analysis_week}: 대상 {st['jobs']} · 저장 {st['saved']} · 안전장치 제외 {st['rejected']} · 토큰 {st.get('usage')}")
+        for line in st["issues"]:
+            print(f"  제외 {line}")
 
     elif args.mode == "term":
         run_term_command(orch.db_path, args.terms[0], args.terms[1:], analysis_week, args.category, args.note)

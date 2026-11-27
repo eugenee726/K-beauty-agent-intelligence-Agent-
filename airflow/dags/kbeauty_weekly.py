@@ -142,6 +142,14 @@ def kbeauty_weekly():
             log.error(f"LLM 판정 단계 실패 (파이프라인은 계속): {e}")
             out["llm_error"] = str(e)[:300]
 
+        # AI 해석: 트렌드·제품마다 마케터 역할 LLM 의 해석·검토 포인트 (참고용, 판정은 바꾸지 않음)
+        try:
+            from tools.analyze.ai_review import AIReviewWriter
+            st = AIReviewWriter("db/kbeauty.db").run(status["week"])
+            out["ai_review"] = {k: st[k] for k in ("jobs", "saved", "rejected")}
+        except Exception as e:
+            log.error(f"AI 해석 생성 실패 (파이프라인은 계속): {e}")
+
         # decide 단계에서 만든 리포트에는 이번 주 검증 결과가 없으므로 다시 생성 (신뢰 표시줄 반영)
         try:
             from pathlib import Path

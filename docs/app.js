@@ -245,6 +245,15 @@
     if (ls.length < 2) return `<div class="act"><b>제안</b> · ${esc(a)}</div>`;
     return `<div class="act"><b>제안</b><dl class="actlist">${ls.map(([k, v]) => `<dt>${esc(k || '')}</dt><dd>${esc(v)}</dd>`).join('')}</dl></div>`;
   }
+  // AI 해석: 마케터 역할 LLM 이 근거로 쓴 해석·검토 포인트 ('라벨: 내용' 줄). 판정이 아니라 참고용
+  const aiLine = (a, label) => { const l = actionLines(a).find(([k]) => k === label); return l ? l[1] : ''; };
+  const AI_TAG = '<span class="tag ai-tag" title="마케터 역할의 LLM이 근거(점유·니즈·캡션·리뷰)를 읽고 쓴 해석과 검토 포인트입니다. 판정이나 정답이 아니며, 지어낸 수치·근거 밖 브랜드는 코드로 걸러 냅니다.">AI 해석 · 참고용</span>';
+  function aiBlock(a, situation) {
+    if (!a) return '';
+    const ls = (situation ? [situation] : []).concat(actionLines(a));
+    return `<div class="act ai">${AI_TAG}<dl class="actlist">${ls.map(([k, v]) => `<dt>${esc(k || '')}</dt><dd>${esc(v)}</dd>`).join('')}</dl></div>`;
+  }
+  const aiCell = a => `<details class="ai-cell"><summary>${esc(aiLine(a, '검토할 것') || aiLine(a, '의미'))}</summary>${AI_TAG}<dl class="actlist">${actionLines(a).map(([k, v]) => `<dt>${esc(k || '')}</dt><dd>${esc(v)}</dd>`).join('')}</dl></details>`;
   // 점유 막대: 막대에는 색만, 브랜드명·건수·비율은 아래 범례에 (작은 칸에서 이름이 잘리지 않게)
   function shareBar(m) {
     if (!m.total) return '<div class="sharebar empty-bar">K-브랜드 언급 없음</div>';
@@ -340,7 +349,7 @@
           <div class="tc-share">${shareBar(sh)} <span class="muted small">${shareNote(sh)}</span>
             ${sh.total ? (sh.small ? tag('표본 부족(참고용)', 'trust hold', `언급 ${sh.total}건 < ${RULES.SHARE_TARGET_N.v}`) : sh.sig ? tag('유의한 우세', 'trust ok', `1위 95% 하한 ${pct(sh.ci[0])} > 2위 95% 상한 ${pct(sh.ci2[1])}`) : '') : ''}
             ${brandFails.length ? reviewTag(brandFails, '브랜드 검토') : ''}</div>
-          <div class="tc-reason muted small">${dup ? esc(reason) : '제안 · ' + esc(actionSummary(t.action))}</div>
+          <div class="tc-reason muted small">${aiLine(t.ai, '검토할 것') ? 'AI 해석 · ' + esc(aiLine(t.ai, '검토할 것')) : dup ? esc(reason) : '제안 · ' + esc(actionSummary(t.action))}</div>
         </div>
         <div class="tc-spark"><canvas id="sp_${i}"></canvas></div>
       </div>
@@ -354,6 +363,7 @@
         <p><b>캡션 언급</b> ${t.mentions.map(m => { const f = chipFail(m); return `<span class="chip out ${f.length ? 'chip-fail' : ''}" ${f.length ? `title="${esc(failTip(f))}" data-track="review_badge_hover"` : ''}>${esc(String(m).toUpperCase())}</span>`; }).join('')}</p>
         <details data-track="evidence_open" data-kw="${esc(t.kw)}" open><summary><b>SNS 근거</b> ${spons ? `<span class="muted small">협찬 ${spons}/${t.evidence.length}</span>` : ''} ${reviewTag(byKind('evidence'), '근거 검토')}</summary>
           ${t.evidence.map(e => `<blockquote class="${isSponsor(e) ? 'sponsor' : ''}">${isSponsor(e) ? tag('협찬', 'spons') + ' ' : ''}“${esc(e)}”</blockquote>`).join('') || '<span class="muted">없음</span>'}</details>
+        ${aiBlock(t.ai, actionLines(t.action).find(([k]) => k === '상황'))}
         ${actionBlock(t.action)}
       </div></section>`;
   }
@@ -506,14 +516,14 @@
     const match = p => (quadFilter === 'ALL' || p.quad === quadFilter) && (!prodSearch || `${p.name} ${p.brand}`.toLowerCase().includes(prodSearch));
     const trend = v => v === null || v === undefined ? '<span class="muted">—</span>' : v > 0 ? `▲ ${v.toFixed(2)}` : v < 0 ? `▼ ${v.toFixed(2)}` : '±0';
     const groups = QUAD_ORDER.map(q => { const rows = ps.filter(p => p.quad === q && match(p));
-      const acts = new Set(rows.map(p => p.action)); return { q, rows, same: rows.length > 1 && acts.size === 1 ? rows[0].action : null }; }).filter(g => g.rows.length);
+      const acts = new Set(rows.map(p => p.action)); return { q, rows, same: rows.length > 1 && acts.size === 1 && !rows.some(p => p.ai) ? rows[0].action : null }; }).filter(g => g.rows.length);
     const body = groups.map(g => {
       const open = openGroups.has(g.q) || !!prodSearch;
       const head = `<tr class="grp"><td colspan="9"><button class="grp-btn" data-track="product_group_expand" data-group="${g.q}">${open ? '▼' : '▶'}</button>
         <span class="tag quad" ${g.same ? `title="${esc('전략 요약: ' + g.same)}"` : ''}>${esc((META.quad[g.q] || {}).label || g.q)}</span> <span class="muted">${g.rows.length}개${g.same ? ' · 전략 요약 동일 (라벨에 마우스)' : ''}</span></td></tr>`;
       return head + (open ? g.rows.map(p => `<tr><td><b>${esc(p.name)}</b></td><td>${esc(String(p.brand).toUpperCase())}</td>
         <td class="num">${pct(p.pos)}</td><td class="num">${pct(p.neg)}</td><td class="num">${trend(p.rt)}</td><td class="num">${fmt(p.vel)}</td>
-        <td class="num">${p.oy_orders ?? '—'}</td><td class="num">${p.oy_korea ?? '—'}</td><td class="muted small">${g.same ? '' : esc(p.action.slice(0, 90))}</td></tr>`).join('') : '');
+        <td class="num">${p.oy_orders ?? '—'}</td><td class="num">${p.oy_korea ?? '—'}</td><td class="small">${p.ai ? aiCell(p.ai) : g.same ? '' : `<span class="muted">${esc(p.action.slice(0, 90))}</span>`}</td></tr>`).join('') : '');
     }).join('');
     const kwRows = ps.filter(p => match(p) && (p.pos_kw.length || p.neg_kw.length || p.needs_kw.length));
     const html = `${snapNote(mode, ws)}

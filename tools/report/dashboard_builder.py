@@ -151,6 +151,7 @@ class DashboardBuilder:
                 "det": det_count(r["keyword"]),
                 "top_post_share": top_share(r["keyword"]),
                 "eng_z": eng_z.get(r["keyword"]),
+                "ai": r["ai_review"] if "ai_review" in r.keys() else None,
             })
 
         # 브랜드 언급 (알려진 K-브랜드만) — 트렌드 행렬
@@ -199,9 +200,10 @@ class DashboardBuilder:
             "neg_kw": [k for k in _json(r["neg_keywords"], []) if k and str(k).lower() != "none"][:5],
             "needs_kw": _json(r["needs_keywords"], [])[:5],
             "oy_url": r["oy_url"], "sephora_url": r["sephora_url"],
+            "ai": r["ai_review"],
         } for r in q(f"""
             SELECT pi.*, p.product_name_en, p.oy_url, p.sephora_url, b.brand_name_en,
-                   {opt('voc_velocity')}, {opt('rating_trend')}
+                   {opt('voc_velocity')}, {opt('rating_trend')}, {opt('ai_review')}
             FROM fact_product_insights pi
             JOIN dim_product p ON p.product_id = pi.product_id
             JOIN dim_brand b ON b.brand_id = pi.brand_id
