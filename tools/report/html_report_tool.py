@@ -11,6 +11,7 @@ K-beauty Intelligence HTML 리포트 생성 툴.
 생성 결과: exports/kbeauty_report_{week}.html
 """
 
+import html as _html
 import json
 import re
 import sqlite3
@@ -19,6 +20,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _action_html(text: str | None) -> str:
+    """트렌드 제안('라벨: 내용' 줄들)을 줄마다 굵은 라벨로. 예전 한 줄 문장은 그대로."""
+    lines = [l for l in (text or "").split("\n") if l.strip()]
+    if len(lines) < 2:
+        return " · " + _html.escape(text or "")
+    out = []
+    for l in lines:
+        k, sep, v = l.partition(": ")
+        out.append(f"<b>{_html.escape(k)}</b> {_html.escape(v)}" if sep else _html.escape(l))
+    return "<br>" + "<br>".join(out)
 
 # ── 기회 유형 / 전략 사분면 한국어 + 색상 매핑 ──
 OPP_META = {
@@ -336,7 +349,7 @@ class HTMLReportTool:
                   {need_html}
                   {ev_html}
                   <div style="font-size:0.82rem;background:#f9f9f9;border-radius:8px;padding:0.6rem;color:#555">
-                    <strong>제안</strong> · {r["action_rec"] or ""}
+                    <strong>제안</strong>{_action_html(r["action_rec"])}
                   </div>
                 </div>
                 <div style="width:240px;height:130px;flex-shrink:0">

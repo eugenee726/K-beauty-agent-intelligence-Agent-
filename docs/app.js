@@ -236,6 +236,15 @@
   const reviewTag = (fs, label) => fs.length ? tag(`${label || '검토 필요'} ${fs.length}`, 'review', failTip(fs), 'data-track="review_badge_hover"') : '';
   const snapNote = (mode, ws) => mode === 'month' ? `<div class="hint">월간 보기: 이 화면은 월의 마지막 데이터 주차(${ws[ws.length - 1].week}) 기준입니다.</div>` : '';
 
+  // 제안: 파이프라인이 '라벨: 내용' 한 줄씩 저장 (decision_agent.ACTION_LABELS). 예전 한 줄 문장은 그대로 보여 준다
+  const actionLines = a => String(a || '').split('\n').map(l => { const i = l.indexOf(': '); return i > 0 ? [l.slice(0, i), l.slice(i + 2)] : [null, l]; });
+  const actionSummary = a => { const ls = actionLines(a), todo = ls.find(([k]) => k === '할 일'), st = ls.find(([k]) => k === '상황');
+    return todo ? `${st ? st[1].split(' · ')[0] + ' — ' : ''}${todo[1]}` : String(a || ''); };
+  function actionBlock(a) {
+    const ls = actionLines(a);
+    if (ls.length < 2) return `<div class="act"><b>제안</b> · ${esc(a)}</div>`;
+    return `<div class="act"><b>제안</b><dl class="actlist">${ls.map(([k, v]) => `<dt>${esc(k || '')}</dt><dd>${esc(v)}</dd>`).join('')}</dl></div>`;
+  }
   // 점유 막대: 막대에는 색만, 브랜드명·건수·비율은 아래 범례에 (작은 칸에서 이름이 잘리지 않게)
   function shareBar(m) {
     if (!m.total) return '<div class="sharebar empty-bar">K-브랜드 언급 없음</div>';
@@ -331,7 +340,7 @@
           <div class="tc-share">${shareBar(sh)} <span class="muted small">${shareNote(sh)}</span>
             ${sh.total ? (sh.small ? tag('표본 부족(참고용)', 'trust hold', `언급 ${sh.total}건 < ${RULES.SHARE_TARGET_N.v}`) : sh.sig ? tag('유의한 우세', 'trust ok', `1위 95% 하한 ${pct(sh.ci[0])} > 2위 95% 상한 ${pct(sh.ci2[1])}`) : '') : ''}
             ${brandFails.length ? reviewTag(brandFails, '브랜드 검토') : ''}</div>
-          <div class="tc-reason muted small">${dup ? esc(reason) : '제안 · ' + esc(t.action)}</div>
+          <div class="tc-reason muted small">${dup ? esc(reason) : '제안 · ' + esc(actionSummary(t.action))}</div>
         </div>
         <div class="tc-spark"><canvas id="sp_${i}"></canvas></div>
       </div>
@@ -345,7 +354,7 @@
         <p><b>캡션 언급</b> ${t.mentions.map(m => { const f = chipFail(m); return `<span class="chip out ${f.length ? 'chip-fail' : ''}" ${f.length ? `title="${esc(failTip(f))}" data-track="review_badge_hover"` : ''}>${esc(String(m).toUpperCase())}</span>`; }).join('')}</p>
         <details data-track="evidence_open" data-kw="${esc(t.kw)}" open><summary><b>SNS 근거</b> ${spons ? `<span class="muted small">협찬 ${spons}/${t.evidence.length}</span>` : ''} ${reviewTag(byKind('evidence'), '근거 검토')}</summary>
           ${t.evidence.map(e => `<blockquote class="${isSponsor(e) ? 'sponsor' : ''}">${isSponsor(e) ? tag('협찬', 'spons') + ' ' : ''}“${esc(e)}”</blockquote>`).join('') || '<span class="muted">없음</span>'}</details>
-        <div class="act"><b>제안</b> · ${esc(t.action)}</div>
+        ${actionBlock(t.action)}
       </div></section>`;
   }
   function pageTrends(mode, k) {

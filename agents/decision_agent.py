@@ -143,10 +143,14 @@ def _brand_label(conn, brand_id: str) -> str:
     return ((r[0] if r and r[0] else brand_id) or "").upper()
 
 
+ACTION_LABELS = ("상황", "할 일", "포지셔닝", "소비자 표현", "채널", "참고 제품")
+
+
 def trend_action_text(conn, week: str, kw: str, shape: str, opp_type: str, shares: list,
                       lead: str | None, cross: bool) -> str:
     """
-    규칙표(ACTION_RULES) + 키워드별 근거로 액션 문장을 만든다 (LLM 없음, 결정적).
+    규칙표(ACTION_RULES) + 키워드별 근거로 액션을 만든다 (LLM 없음, 결정적).
+    항목마다 한 줄 '라벨: 내용' (ACTION_LABELS 순서, 근거가 없는 항목은 생략) — 대시보드·리포트가 줄 단위로 표처럼 보여 준다.
     shares: [(brand_id, 점유, 언급 수)] — 대화 점유 판정과 같은 결정적 집계(count_brands).
     """
     label, when = ACTION_RULES["timing"].get(shape, ACTION_RULES["timing"]["steady"])
@@ -154,27 +158,22 @@ def trend_action_text(conn, week: str, kw: str, shape: str, opp_type: str, share
         b, s, n = shares[0]
         B = _brand_label(conn, b)
         ratio = f", 2위의 {n / shares[1][2]:.1f}배" if len(shares) > 1 else ", 단독 언급"
-        pos = (f"{B} 우세({s:.0%}{ratio}) — {B}는 점유 유지(리뷰·재구매 메시지), "
-               f"그 외 브랜드는 {B} 대표 제품과 다른 제형·가격·피부 타입으로 차별화")
+        where = f"{B} 우세({s:.0%}{ratio})"
+        pos = f"{B}는 점유 유지(리뷰·재구매 메시지), 그 외 브랜드는 {B} 대표 제품과 다른 제형·가격·피부 타입으로 차별화"
     elif opp_type == "contested" and shares:
-        top = ", ".join(f"{_brand_label(conn, b)} {s:.0%}" for b, s, _ in shares[:2])
-        pos = f"대표 브랜드 없음({top}) — 니즈를 가장 직접 말하는 메시지가 선점할 여지"
+        where = "대표 브랜드 없음(" + ", ".join(f"{_brand_label(conn, b)} {s:.0%}" for b, s, _ in shares[:2]) + ")"
+        pos = "니즈를 가장 직접 말하는 메시지가 선점할 여지 — 아래 소비자 표현을 그대로 쓴 콘텐츠"
     elif _ref_products(conn, week, kw, 1):
-        pos = f"대화에 K-브랜드 언급 없음 — 맞는 제품을 가진 브랜드가 '{kw.replace('_', ' ')}' 메시지로 먼저 말할 여지"
+        where = "대화에 K-브랜드 언급 없음"
+        pos = f"맞는 제품을 가진 브랜드가 '{kw.replace('_', ' ')}' 메시지로 먼저 말할 여지"
     else:
+        where = "대화에 K-브랜드 언급 없음"
         pos = "맞는 K-뷰티 제품 없음 — 신제품·소싱 검토 신호"
     terms = _consumer_terms(conn, week, kw)
     channel = ("TikTok·YouTube 동시" if cross else f"{'TikTok' if lead == 'tiktok' else 'YouTube'} 중심") if lead else ""
-    text = f"{label} · {pos}. {when}"
-    if terms:
-        text += f" — 소비자 표현 '{', '.join(terms)}' 활용"
-    if channel:
-        text += f" · 채널: {channel}"
-    text += "."
     prods = _ref_products(conn, week, kw)
-    if prods:
-        text += f" 참고 제품: {', '.join(prods)}."
-    return text
+    values = (f"{label} · {where}", when, pos, ", ".join(terms), channel, ", ".join(prods))
+    return "\n".join(f"{k}: {v}" for k, v in zip(ACTION_LABELS, values) if v)
 
 
 def reshape_trends(db_path: str, week: str) -> dict:

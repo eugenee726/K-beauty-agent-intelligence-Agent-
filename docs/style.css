@@ -272,3 +272,9 @@ details.card summary { cursor: pointer; }
 .sharelegend { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 12px; color: var(--ink-2); }
 .sharelegend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 .sw.seg-0 { background: #343a40; } .sw.seg-1 { background: #6c757d; } .sw.seg-2 { background: #adb5bd; } .sw.seg-3 { background: #dee2e6; }
+
+/* 제안: 항목별 두 칸 목록 */
+.tcard .actlist { display: grid; grid-template-columns: 84px 1fr; gap: 6px 12px; margin: 8px 0 0; }
+.tcard .actlist dt { color: var(--muted); font-weight: 600; }
+.tcard .actlist dd { margin: 0; color: var(--ink); line-height: 1.5; }
+@media (max-width: 640px) { .tcard .actlist { grid-template-columns: 1fr; gap: 2px; } .tcard .actlist dd { margin-bottom: 6px; } }
