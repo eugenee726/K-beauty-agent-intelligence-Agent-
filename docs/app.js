@@ -683,7 +683,7 @@
     const mini = (label, cls) => `<span class="tag ${cls}">${label}</span>`;
     const quad = cells => `<div class="q2">${cells.map(([t, d, cls]) => `<div class="q2c ${cls || ''}"><b>${t}</b><span>${d}</span></div>`).join('')}</div>`;
     const html = `<div class="method">
-      ${card('전체 흐름', `매주 목요일 Airflow 실행 · YouTube는 매일 수집 · 기준 주차 ${esc(w.week)}`,
+      ${card('전체 흐름', `매주 목요일 Airflow 실행 · YouTube는 매일 수집 · 기준 주차 ${esc(w.week)}. 주차 옆 날짜는 실제 수집일(KST)이며, 게시물은 수집일 직전 7일 · 리테일 랭킹은 수집 시점 기준`,
         `<div class="flow">${flow.map(([t, d], i) => `<div class="fstep"><div class="fn">${i + 1}</div><b>${t}</b><span>${d}</span></div>`).join('')}</div>`)}
 
       <div class="grid2">
@@ -799,11 +799,13 @@
     sel.innerHTML = periodKeys(state.mode).slice().reverse().map(x => `<option value="${x}" ${x === state.key ? 'selected' : ''}>
       ${state.mode === 'week' ? `${x} · ${esc(WEEK[x].label)}` : monthLabel(x)}</option>`).join('');
     const ws = periodWeeks(state.mode, state.key), last = ws[ws.length - 1];
-    const partial = D.generated < `${last.end} 23:59`;
     document.getElementById('pageTitle').textContent = PAGES[state.page];
     document.getElementById('pageDesc').textContent = PAGE_DESC[state.page] || '';
-    document.getElementById('periodLabel').textContent = (state.mode === 'week' ? last.label
-      : `${monthLabel(state.key)} · 데이터 주차 ${ws.map(w => w.week.slice(5)).join(', ')}`) + (partial ? ' (집계 중)' : '');
+    // 대시보드는 그 주 정기 실행이 끝난 뒤에 만들어지므로 보이는 주차는 모두 집계 완료 (수집일은 라벨에 표시)
+    const pl = document.getElementById('periodLabel');
+    pl.textContent = state.mode === 'week' ? last.label
+      : `${monthLabel(state.key)} · 데이터 주차 ${ws.map(w => w.week.slice(5)).join(', ')}`;
+    pl.title = '수집일 = 실행 시점. 게시물은 수집일 직전 7일, 리테일 랭킹은 수집 시점 기준';
     const v = valid(ws);
     document.getElementById('trustBadge').innerHTML = v.rate === null ? '검증 기록 없음' : `검증 통과 <b>${pct(v.rate)}</b> · 검토 필요 <b class="review-num">${v.fails}</b>`;
     document.getElementById('banner').innerHTML = ws.some(w => w.legacy)

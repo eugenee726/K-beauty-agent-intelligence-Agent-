@@ -46,6 +46,31 @@ def _week_dates(week: str) -> tuple[date, date, str]:
     return monday, monday + timedelta(days=6), f"{thursday.year}-{thursday.month:02d}"
 
 
+KST = timedelta(hours=9)
+
+
+def _collected_days(conn, week: str) -> tuple[str, str] | None:
+    """그 주차 SNS 원문을 실제로 수집한 날(KST)의 첫날·마지막 날. 수집 기록이 없으면 None.
+    수집은 실행 시점의 '최근 7일'을 가져오므로, 주차의 데이터 기간은 달력 주가 아니라 수집일 기준이다."""
+    lo, hi = conn.execute("SELECT MIN(collected_at), MAX(collected_at) FROM fact_sns_raw WHERE week=?",
+                          (week,)).fetchone()
+    if not lo:
+        return None
+    kst = lambda s: (datetime.fromisoformat(s[:19]) + KST).date().isoformat()   # collected_at 은 UTC
+    return kst(lo), kst(hi)
+
+
+def _week_label(week: str, collected: tuple[str, str] | None) -> str:
+    """'2026년 11월 5주차 · 11/26 수집' (수집일이 여러 날이면 '11/21~11/26 수집').
+    수집 기록이 없는 주차만 예전처럼 달력 주 범위를 쓴다."""
+    base = HTMLReportTool._week_label(week)
+    if not collected:
+        return base
+    md = lambda s: f"{int(s[5:7])}/{int(s[8:10])}"
+    lo, hi = collected
+    return f"{base.split(' (')[0]} · {md(lo) if lo == hi else f'{md(lo)}~{md(hi)}'} 수집"
+
+
 def _first_sentence(text: str) -> str:
     return re.split(r"(?<=[.다])\s", (text or "").strip(), maxsplit=1)[0]
 
@@ -76,7 +101,8 @@ class DashboardBuilder:
     # ── 주차 하나 ──
     def _week(self, conn, week: str, known: dict, names: dict, company: dict) -> dict:
         from tools.quality.insight_checks import _brand_key
-        start, end, month = _week_dates(week)
+        start, end, month = _week_dates(week)   # month: 월 묶음은 그대로 ISO 주의 목요일 기준
+        collected = _collected_days(conn, week)
         q = lambda sql, *a: conn.execute(sql, (week, *a)).fetchall()
 
         # KPI
@@ -235,8 +261,8 @@ class DashboardBuilder:
                         WHERE ip.week=? ORDER BY ip.rank""")]
 
         return {
-            "week": week, "month": month, "label": HTMLReportTool._week_label(week),
-            "start": start.isoformat(), "end": end.isoformat(),
+            "week": week, "month": month, "label": _week_label(week, collected),
+            "start": start.isoformat(), "end": end.isoformat(), "collected": collected,
             "kpi": {"trends": len(trends), "posts": sum(r["n"] for r in posts),
                     "ranked": ranked, "ranked_brands": len(rk)},
             "platforms": {r["platform_id"]: r["n"] for r in posts},
